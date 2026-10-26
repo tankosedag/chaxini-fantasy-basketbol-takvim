@@ -113,8 +113,18 @@ function showPage(next){
  if(data)render();
  closeMenu();window.scrollTo(0,0);
 }
-function openMenu(){menuReturn=document.activeElement;$('navDrawer').hidden=false;$('menuShade').hidden=false;$('menuToggle').setAttribute('aria-expanded','true');document.body.classList.add('menu-open');$('menuClose').focus()}
-function closeMenu(){const wasOpen=!$('navDrawer').hidden;$('navDrawer').hidden=true;$('menuShade').hidden=true;$('menuToggle').setAttribute('aria-expanded','false');document.body.classList.remove('menu-open');if(wasOpen&&menuReturn)menuReturn.focus()}
+let menuCloseTimer;
+function menuMotion(open){
+ const drawer=$('navDrawer'),shade=$('menuShade');
+ [drawer,shade].forEach(el=>el.getAnimations().forEach(a=>a.cancel()));
+ const reduced=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+ const duration=reduced?0:(open?140:110);
+ drawer.animate(open?[{transform:'translateX(-12px)',opacity:.92},{transform:'translateX(0)',opacity:1}]:[{transform:'translateX(0)',opacity:1},{transform:'translateX(-8px)',opacity:0}],{duration,easing:open?'cubic-bezier(.16,1,.3,1)':'ease-out',fill:'both'});
+ shade.animate(open?[{opacity:0},{opacity:1}]:[{opacity:1},{opacity:0}],{duration,easing:'ease-out',fill:'both'});
+ return duration;
+}
+function openMenu(){clearTimeout(menuCloseTimer);menuReturn=document.activeElement;$('navDrawer').hidden=false;$('menuShade').hidden=false;$('menuToggle').setAttribute('aria-expanded','true');document.body.classList.add('menu-open');menuMotion(true);$('menuClose').focus()}
+function closeMenu(){const wasOpen=!$('navDrawer').hidden;if(!wasOpen)return;clearTimeout(menuCloseTimer);$('menuToggle').setAttribute('aria-expanded','false');const duration=menuMotion(false);menuCloseTimer=setTimeout(()=>{$('navDrawer').hidden=true;$('menuShade').hidden=true;document.body.classList.remove('menu-open')},duration);if(menuReturn)menuReturn.focus()}
 $('menuToggle').onclick=openMenu;$('menuClose').onclick=closeMenu;$('menuShade').onclick=closeMenu;
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>{location.hash=routes[b.dataset.page];showPage(b.dataset.page)});
 $('homeLink').onclick=e=>{e.preventDefault();location.hash=routes.season;showPage('season')};
