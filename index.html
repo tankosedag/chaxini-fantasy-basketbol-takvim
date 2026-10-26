@@ -122,7 +122,7 @@ document.addEventListener('keydown',e=>{if($('navDrawer').hidden)return;if(e.key
 window.addEventListener('hashchange',()=>{const next=Object.keys(routes).find(k=>routes[k]===location.hash.slice(1));if(next)showPage(next)});
 // Each fresh visit starts at the season overview.
 showPage('season');
-if('serviceWorker' in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js').catch(()=>{});
+if('serviceWorker' in navigator&&location.protocol!=='file:')navigator.serviceWorker.register('./sw.js',{updateViaCache:'none'}).then(reg=>{reg.update();}).catch(err=>console.warn('Çevrimdışı hazırlık başarısız:',err));
 let installPrompt;
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();installPrompt=e;$('installApp').hidden=false});
 $('installApp').onclick=async()=>{if(!installPrompt)return;await installPrompt.prompt();await installPrompt.userChoice;installPrompt=null;$('installApp').hidden=true};
