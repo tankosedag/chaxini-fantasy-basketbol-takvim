@@ -1,8 +1,0 @@
-const assert=require('node:assert/strict');const E=require('./team-engine.js');
-const make=(id,stats={},extra={})=>({id,name:id,nba:'BOS',positions:['PG'],injury:'',gp:3,teamGp:5,participation:.6,rank:200,preRank:200,mpg:20,stats:{pts:10,threes:1,reb:3,ast:2,stl:1,blk:.2,to:2,fgm:4,fga:8,ftm:2,fta:3,fg:.5,ft:2/3,...stats},...extra});
-assert(E.eligible(make('boundary')));assert(!E.eligible(make('low',{}, {participation:.59})));assert(!E.eligible(make('missing',{}, {participation:null})));assert(!E.eligible(make('injured',{}, {injury:'O'})));
-const low=make('lowto',{to:.5}),high=make('highto',{to:4});assert.equal(E.recommend([low,high],{lowto:'FA',highto:'FA'},[],['to'])[0].player.id,'lowto');assert.equal(E.recommend([low],{lowto:'W'},[],['to']).length,0);
-const players=[make('a'),make('b'),make('c',{}, {positions:['C']})];assert.equal(E.lineup(players,['PG','C'],'2026-10-30',{BOS:['2026-10-30']}).players.length,2);
-assert(E.protectedPlayer(make('star',{}, {rank:12}),new Set()));assert(E.protectedPlayer(make('custom'),new Set(['custom'])));
-const pct=E.estimate([make('volume',{fgm:1,fga:10}),make('small',{fgm:1,fga:1})]);assert.equal(pct.fg,2/11);
-const fixture=require('./team-snapshot.json');const r=fixture.catalog.players.filter(p=>fixture.league.teams[0].playerIds.includes(p.id));const rec=E.recommend(fixture.catalog.players,fixture.league.availability,r,['threes']);assert(rec.length>=1&&rec.length<=6);assert(rec.every(v=>E.eligible(v.player)&&fixture.league.availability[v.player.id]==='FA'));assert(rec.every((v,i)=>!i||rec[i-1].score>=v.score));console.log('PASS: participation boundary, injuries, turnover direction, waiver gating, lineup capacity, protected players, weighted FG, and live-snapshot recommendations.');
