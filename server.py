@@ -51,7 +51,7 @@ def parse_players(source):
   for key,idx in [('fgm',10),('ftm',12)]:
    pair=vals[idx].split('/');stats[key]=num(pair[0]);stats[key.replace('m','a')]=num(pair[1]) if len(pair)==2 else None
   for key,idx in [('fg',11),('ft',13),('threes',14),('pts',15),('reb',16),('ast',17),('stl',18),('blk',19),('to',20)]:stats[key]=num(vals[idx])
-  p['stats']=stats;p['_availability']='FA' if vals[4]=='FA' else 'W' if re.match(r'^W\b',vals[4]) else 'owned';result.append(p)
+  p['seasonTotals']=dict(stats);p['stats']={k:(v if k in {'fg','ft'} else v/p['gp'] if v is not None and p['gp'] else 0 if p['gp']==0 else None) for k,v in stats.items()};p['_availability']='FA' if vals[4]=='FA' else 'W' if re.match(r'^W\b',vals[4]) else 'owned';result.append(p)
  return result
 
 def parse_rosters(source,league):
@@ -77,7 +77,7 @@ def team_games():
  return out
 
 def fetch_catalog(lid):
- allp={};base=f'https://basketball.fantasysports.yahoo.com/nba/{lid}/players?status=ALL&pos=P&stat1=S_AS_{season()}&sort=AR&sdir=1&count='
+ allp={};base=f'https://basketball.fantasysports.yahoo.com/nba/{lid}/players?status=ALL&pos=P&stat1=S_S_{season()}&sort=AR&sdir=1&count='
  # Bounded pagination; require an empty page rather than silently accepting a partial pool.
  complete=False
  for block in range(0,1000,100):
@@ -96,7 +96,7 @@ def refresh(lid):
  teams,lineups=parse_rosters(get(f'https://basketball.fantasysports.yahoo.com/nba/{lid}/startingrosters'),lid)
  players=fetch_catalog(lid);available={p['id']:p.pop('_availability') for p in players};warnings=[]
  try:games=team_games()
- except Exception as e:games={};warnings.append('NBA takım maç sayıları alınamadı. %60 şartı doğrulanamayan oyuncular önerilmez.')
+ except Exception as e:games={};warnings.append('NBA takım maç sayıları alınamadı. %65 şartı doğrulanamayan oyuncular önerilmez.')
  byid={p['id']:p for p in players}
  for team in teams:
   for pid,metadata in lineups[team['id']].items():
@@ -104,7 +104,7 @@ def refresh(lid):
    available[pid]='owned'
  for p in byid.values():
   gp=games.get(p['nba']);p['teamGp']=gp;p['participation']=p['gp']/gp if gp and p.get('gp') is not None and p['gp']<=gp else None
- stamp=now();catalog={'season':season(),'updatedAt':stamp,'players':list(byid.values()),'teamGames':games,'sources':['Yahoo season per-game averages','ESPN NBA standings'],'warnings':warnings,'dailyAddsAvailable':False}
+ stamp=now();catalog={'season':season(),'updatedAt':stamp,'players':list(byid.values()),'teamGames':games,'sources':['Yahoo season totals and per-appearance minutes','ESPN NBA standings'],'warnings':warnings,'dailyAddsAvailable':False}
  league={'id':lid,'name':'Yahoo ligi '+lid,'updatedAt':stamp,'teams':teams,'availability':available,'lineups':{k:{pid:v['slot'] for pid,v in line.items()} for k,line in lineups.items()},'publicOnly':True}
  title=html.fromstring(get(f'https://basketball.fantasysports.yahoo.com/nba/{lid}')).xpath('string(//title)');league['name']=title.split('|')[0].strip() or league['name']
  with LOCK:atomic(CACHE/f'catalog-{season()}.json',catalog);atomic(CACHE/f'league-{lid}.json',league)
@@ -119,10 +119,11 @@ class Handler(SimpleHTTPRequestHandler):
   u=urlparse(self.path)
   if u.path=='/api/league':
    lid=parse_qs(u.query).get('id',[''])[0]
+   force=parse_qs(u.query).get('refresh',['0'])[0]=='1'
    try:
     if not re.fullmatch(r'\d{1,10}',lid):raise ValueError('Geçerli Yahoo NBA lig bağlantısı gir.')
     path=CACHE/f'league-{lid}.json';cp=CACHE/f'catalog-{season()}.json'
-    if path.exists() and cp.exists() and time.time()-path.stat().st_mtime<900 and time.time()-cp.stat().st_mtime<900:result={'league':json.loads(path.read_text()),'catalog':json.loads(cp.read_text())}
+    if not force and path.exists() and cp.exists() and time.time()-path.stat().st_mtime<900 and time.time()-cp.stat().st_mtime<900:result={'league':json.loads(path.read_text()),'catalog':json.loads(cp.read_text())}
     else:result=refresh(lid)
     self.reply(200,result)
    except Exception as e:self.reply(502,{'error':str(e)})
