@@ -1,10 +1,10 @@
 {
-  "id": "/chaxini-fantasy-basketbol-takvim/",
+  "id": "./",
   "name": "chaxini fantasy basketbol takvimi",
   "short_name": "chaxini",
   "lang": "tr",
-  "start_url": "/chaxini-fantasy-basketbol-takvim/#sezon-ozeti",
-  "scope": "/chaxini-fantasy-basketbol-takvim/",
+  "start_url": "./#sezon-ozeti",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#101719",
   "theme_color": "#101719",
