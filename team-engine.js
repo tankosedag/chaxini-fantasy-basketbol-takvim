@@ -3,8 +3,18 @@
 const cats=['pts','threes','reb','ast','stl','blk','to','fg','ft'];
 const unavailable=new Set(['O','INJ','IL','NA','OFS','SUSP','D']);
 const n=(p,k)=>Number.isFinite(p.stats?.[k])?p.stats[k]:null;
+
+function normalize(p){
+ const rawStats=p.rawStats||p.stats||{},rawMpg=Object.hasOwn(p,'rawMpg')?p.rawMpg:p.mpg;
+ const valid=Number.isFinite(p.gp)&&Number.isFinite(p.teamGp)&&p.teamGp>0&&p.gp>=0&&p.gp<=p.teamGp;
+ const ratio=valid?p.gp/p.teamGp:null,stats={...rawStats};
+ for(const k of ['fgm','fga','ftm','fta','threes','pts','reb','ast','stl','blk','to'])stats[k]=valid?(Number.isFinite(p.seasonTotals?.[k])?p.seasonTotals[k]/p.teamGp:p.gp===0?0:Number.isFinite(rawStats[k])?rawStats[k]*ratio:null):null;
+ return {...p,rawStats,rawMpg,stats,mpg:valid?(p.gp===0?0:Number.isFinite(rawMpg)?rawMpg*ratio:null):null,participation:ratio,averagesBasis:'nba-team-games',averagePrecision:p.seasonTotals?'season-totals':'rounded-yahoo-averages'};
+}
+
+function inScope(p){return p.injury!=='NA'&&Number.isFinite(p.mpg)&&p.mpg>=10}
 function healthy(p){return !unavailable.has(p.injury)}
-function eligible(p){return healthy(p)&&Number.isFinite(p.participation)&&p.participation>=.6&&p.gp>0&&p.positions?.length&&Number.isFinite(p.rank)}
+function eligible(p){return inScope(p)&&healthy(p)&&Number.isFinite(p.participation)&&p.participation>=.65&&p.gp>0&&p.positions?.length&&Number.isFinite(p.rank)}
 function skill(p,k,base){if(k==='fg')return n(p,'fgm')!==null&&n(p,'fga')!==null?n(p,'fgm')-base.fg*n(p,'fga'):null;if(k==='ft')return n(p,'ftm')!==null&&n(p,'fta')!==null?n(p,'ftm')-base.ft*n(p,'fta'):null;let x=n(p,k);return x===null?null:k==='to'?-x:x}
 function rates(players){const sum=k=>players.reduce((s,p)=>s+(n(p,k)||0),0);return {fg:sum('fga')?sum('fgm')/sum('fga'):.46,ft:sum('fta')?sum('ftm')/sum('fta'):.78}}
 function recommend(players,availability,roster,needs,allowWaiver=false){
@@ -15,7 +25,7 @@ function recommend(players,availability,roster,needs,allowWaiver=false){
 }
 function fits(p,slot){if(slot==='Util')return true;if(slot==='G')return p.positions.some(x=>x==='PG'||x==='SG');if(slot==='F')return p.positions.some(x=>x==='SF'||x==='PF');return p.positions.includes(slot)}
 function lineup(players,slots,date,schedule){
- const active=players.filter(p=>healthy(p)&&schedule[p.nba]?.includes(date)&&!['IL','IL+','NA'].includes(p.slot)).sort((a,b)=>(a.rank??9999)-(b.rank??9999));
+ const active=players.filter(p=>inScope(p)&&healthy(p)&&schedule[p.nba]?.includes(date)&&!['IL','IL+','NA'].includes(p.slot)).sort((a,b)=>(a.rank??9999)-(b.rank??9999));
  const match=new Array(slots.length).fill(null);
  function assign(p,seen){for(let i=0;i<slots.length;i++){if(seen.has(i)||!fits(p,slots[i]))continue;seen.add(i);if(!match[i]||assign(match[i],seen)){match[i]=p;return true}}return false}
  active.forEach(p=>assign(p,new Set()));return {players:match.filter(Boolean),scheduled:active.length,benched:active.length-match.filter(Boolean).length};
@@ -39,5 +49,5 @@ function optimize(roster,players,availability,slots,dates,schedule,locks,needs){
  }
  return {baseline,plans:plans.sort((a,b)=>b.gain-a.gain||a.rankCost-b.rankCost).filter((p,i,a)=>a.findIndex(q=>q.add.id===p.add.id)===i).slice(0,6)};
 }
-const api={cats,healthy,eligible,recommend,rates,fits,lineup,estimate,totals,protectedPlayer,optimize};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.TeamEngine=api;
+const api={cats,normalize,inScope,healthy,eligible,recommend,rates,fits,lineup,estimate,totals,protectedPlayer,optimize};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.TeamEngine=api;
 })(typeof window==='undefined'?{}:window);

@@ -23,11 +23,20 @@ async function accept(payload,fromSnapshot=false){
 function leagueId(url){let u;try{u=new URL(url)}catch{throw Error('Tam Yahoo NBA lig bağlantısını yapıştır.')}if(u.protocol!=='https:'||u.hostname!=='basketball.fantasysports.yahoo.com')throw Error('Yalnızca https://basketball.fantasysports.yahoo.com/nba/… bağlantıları kabul edilir.');const m=u.pathname.match(/^\/nba\/(\d+)(?:\/|$)/);if(!m)throw Error('Lig numarası bağlantıda bulunamadı.');return m[1]}
 async function loadLeague(){if(busy)return;let id;try{id=leagueId(el('leagueUrl').value.trim())}catch(e){status(e.message);return}busy=true;el('loadLeague').disabled=true;status('Lig kadroları ve oyuncu havuzu yükleniyor… İlk yükleme birkaç dakika sürebilir.');try{
  const base=(el('teamApi').value||'').trim().replace(/\/$/,'');if(base&&!/^https:\/\//.test(base)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base))throw Error('Veri servisi adresi HTTPS olmalı.');try{localStorage.setItem('chaxini-team-api',base)}catch{}
- const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),240000);let response;
- try{response=await fetch(`${base}/api/league?id=${encodeURIComponent(id)}&refresh=1`,{signal:controller.signal,cache:'no-store'})}finally{clearTimeout(timer)}
- if(!response.ok)throw Error('Veri servisi lig bilgilerini yükleyemedi.');let payload=await response.json();if(payload.error)throw Error(payload.error);await accept(payload);
+ const deadline=Date.now()+480000;let job='',payload;
+ while(true){
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);let response;
+  try{response=await fetch(`${base}/api/league?id=${encodeURIComponent(id)}&refresh=1&async=1${job?'&job='+encodeURIComponent(job):''}`,{signal:controller.signal,cache:'no-store'});payload=await response.json()}finally{clearTimeout(timer)}
+  if(!response.ok)throw Error(payload.error||`Veri servisi yanıtı: ${response.status}`);
+  if(response.status!==202){await accept(payload);break}
+  if(!payload.job)throw Error('Sunucu yükleme numarasını döndürmedi.');job=payload.job;
+  if(Date.now()>deadline)throw Error('Yahoo verilerinin indirilmesi beklenenden uzun sürdü. Biraz sonra tekrar yenile.');
+  status('Yahoo verileri sunucuda indiriliyor… Tamamlandığında kadro otomatik güncellenecek.');
+  await new Promise(resolve=>setTimeout(resolve,2500));
+ }
+
  }catch(e){const l=await cache.get('league-'+id),c=l?await cache.get('catalog-'+(new Date().getMonth()>=7?new Date().getFullYear():new Date().getFullYear()-1)):null;
- if(l&&c){await accept({league:l,catalog:c},true);status(el('teamStatus').textContent+' · Yenileme başarısız; son kayıt gösteriliyor.')}else status('Lig yüklenemedi. GitHub Pages üzerinde canlı yükleme için veri servisi bağlantısı gerekir. Kayıtlı örnek ligi açabilir veya bağlantı ayarını yapabilirsin. '+(e.name==='AbortError'?'İstek zaman aşımına uğradı.':e.message));
+ if(l&&c){await accept({league:l,catalog:c},true);status(el('teamStatus').textContent+' · Yenileme başarısız; son kayıt gösteriliyor. '+(e.name==='AbortError'?'Sunucu yanıtı zaman aşımına uğradı; biraz sonra tekrar dene.':e.message))}else status('Lig yüklenemedi. GitHub Pages üzerinde canlı yükleme için veri servisi bağlantısı gerekir. Kayıtlı örnek ligi açabilir veya bağlantı ayarını yapabilirsin. '+(e.name==='AbortError'?'İstek zaman aşımına uğradı.':e.message));
  }finally{busy=false;el('loadLeague').disabled=false}}
 function needs(){const a=[...document.querySelectorAll('#needs input:checked')].map(e=>e.value);return a.length?a:['pts']}
 function badge(p){const c=colors[p.nba]||'#506070';return `<span class="monogram" style="--tc:${esc(c)}" title="${esc(names[p.nba]||p.nba)}">${esc(p.nba||'?')}</span>`}

@@ -1,7 +1,7 @@
 """Chaxini public Yahoo league adapter. Run: pip install -r requirements.txt; python server.py.
 Only reads public pages; never asks for Yahoo credentials or performs roster transactions.
 """
-import concurrent.futures, datetime as dt, json, os, re, threading, time
+import concurrent.futures, datetime as dt, json, os, re, threading, time, uuid, traceback
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 from urllib.request import Request, urlopen
@@ -109,6 +109,27 @@ def refresh(lid):
  title=html.fromstring(get(f'https://basketball.fantasysports.yahoo.com/nba/{lid}')).xpath('string(//title)');league['name']=title.split('|')[0].strip() or league['name']
  with LOCK:atomic(CACHE/f'catalog-{season()}.json',catalog);atomic(CACHE/f'league-{lid}.json',league)
  return {'catalog':catalog,'league':league}
+# Long Yahoo downloads run outside HTTP requests. Clients poll a short job endpoint.
+JOBS={}
+JOB_LOCK=threading.Lock()
+REFRESH_LOCK=threading.Lock()
+def run_job(token,lid):
+ try:
+  with REFRESH_LOCK:result=refresh(lid)
+  with JOB_LOCK:JOBS[token].update(state='done',result=result,finished=time.time())
+ except Exception as e:
+  traceback.print_exc()
+  with JOB_LOCK:JOBS[token].update(state='error',error=str(e),finished=time.time())
+def start_job(lid):
+ with JOB_LOCK:
+  for token,job in list(JOBS.items()):
+   if job.get('finished',time.time())<time.time()-600:del JOBS[token]
+  for token,job in JOBS.items():
+   if job['lid']==lid and job['state']=='loading':return token
+  if sum(j['state']=='loading' for j in JOBS.values())>=8:raise ValueError('Sunucu meşgul. Biraz sonra tekrar dene.')
+  token=uuid.uuid4().hex;JOBS[token]={'lid':lid,'state':'loading'}
+ threading.Thread(target=run_job,args=(token,lid),daemon=True).start()
+ return token
 class Handler(SimpleHTTPRequestHandler):
  def __init__(self,*a,**kw):super().__init__(*a,directory=str(ROOT),**kw)
  def end_headers(self):
@@ -120,17 +141,35 @@ class Handler(SimpleHTTPRequestHandler):
   if u.path=='/api/league':
    lid=parse_qs(u.query).get('id',[''])[0]
    force=parse_qs(u.query).get('refresh',['0'])[0]=='1'
+   async_mode=parse_qs(u.query).get('async',['0'])[0]=='1'
+   token=parse_qs(u.query).get('job',[''])[0]
    try:
     if not re.fullmatch(r'\d{1,10}',lid):raise ValueError('Geçerli Yahoo NBA lig bağlantısı gir.')
+    if token:
+     with JOB_LOCK:job=dict(JOBS.get(token,{}))
+     if not job or job['lid']!=lid:self.reply(404,{'error':'Yükleme işlemi bulunamadı; sunucu yeniden başlamış olabilir. Tekrar yenile.'});return
+     if job['state']=='done':self.reply(200,job['result'])
+     elif job['state']=='error':self.reply(502,{'error':job['error']})
+     else:self.reply(202,{'job':token,'state':'loading'})
+     return
+    if async_mode:
+     token=start_job(lid);self.reply(202,{'job':token,'state':'loading'});return
     path=CACHE/f'league-{lid}.json';cp=CACHE/f'catalog-{season()}.json'
     if not force and path.exists() and cp.exists() and time.time()-path.stat().st_mtime<900 and time.time()-cp.stat().st_mtime<900:result={'league':json.loads(path.read_text()),'catalog':json.loads(cp.read_text())}
     else:result=refresh(lid)
     self.reply(200,result)
-   except Exception as e:self.reply(502,{'error':str(e)})
+   except (BrokenPipeError,ConnectionResetError):return
+   except Exception as e:
+    traceback.print_exc();self.reply(502,{'error':str(e)})
   elif u.path.startswith('/cache/') or u.path.endswith(('.py','.txt')) and u.path!='/KURULUM.txt':self.send_error(404)
   else:super().do_GET()
  def reply(self,status,obj):
-  b=json.dumps(obj,ensure_ascii=False).encode();self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)
+  b=json.dumps(obj,ensure_ascii=False).encode()
+  try:
+   self.send_response(status);self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Cache-Control','no-store');self.send_header('Content-Length',str(len(b)));self.end_headers();self.wfile.write(b)
+  except (BrokenPipeError,ConnectionResetError):
+   self.close_connection=True
+
 if __name__=='__main__':
  import argparse
  parser=argparse.ArgumentParser();parser.add_argument('--snapshot',help='Download a public league snapshot');args=parser.parse_args()
