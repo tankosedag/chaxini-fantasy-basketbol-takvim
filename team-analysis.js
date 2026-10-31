@@ -22,7 +22,7 @@ async function accept(payload,fromSnapshot=false){
 }
 function leagueId(url){let u;try{u=new URL(url)}catch{throw Error('Tam Yahoo NBA lig bağlantısını yapıştır.')}if(u.protocol!=='https:'||u.hostname!=='basketball.fantasysports.yahoo.com')throw Error('Yalnızca https://basketball.fantasysports.yahoo.com/nba/… bağlantıları kabul edilir.');const m=u.pathname.match(/^\/nba\/(\d+)(?:\/|$)/);if(!m)throw Error('Lig numarası bağlantıda bulunamadı.');return m[1]}
 async function loadLeague(){if(busy)return;let id;try{id=leagueId(el('leagueUrl').value.trim())}catch(e){status(e.message);return}busy=true;el('loadLeague').disabled=true;status('Lig kadroları ve oyuncu havuzu yükleniyor… İlk yükleme birkaç dakika sürebilir.');try{
- const base=(el('teamApi').value||'').trim().replace(/\/$/,'');if(base&&!/^https:\/\//.test(base)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base))throw Error('Veri servisi adresi HTTPS olmalı.');try{localStorage.setItem('chaxini-team-api',base)}catch{}
+ const base=apiBase;if(base&&!/^https:\/\//.test(base)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base))throw Error('Veri servisi adresi HTTPS olmalı.');try{localStorage.setItem('chaxini-team-api',base)}catch{}
  const deadline=Date.now()+480000;let job='',payload;
  while(true){
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),90000);let response;
@@ -63,7 +63,7 @@ function drawEfficiency(){if(typeof data==='undefined'||!data)return;const date=
 el('loadLeague').onclick=loadLeague;el('myTeam').onchange=()=>{state.team=el('myTeam').value;render()};el('taSearch').oninput=()=>{state.query=el('taSearch').value;render()};el('taSort').onchange=()=>{state.sort=el('taSort').value;render()};el('taList').onchange=()=>{state.list=el('taList').value;render()};el('needs').innerHTML=Object.entries(labels).map(([k,v])=>`<label><input type="checkbox" value="${k}" ${k==='threes'?'checked':''}>${v}</label>`).join('');el('needs').onchange=()=>render();el('includeWaiver').onchange=()=>drawRecommendations();el('effDate').value=today();el('effDate').onchange=drawEfficiency;
 el('playerTable').onclick=e=>{const id=e.target.dataset.lock;if(id){e.target.checked?locks.add(id):locks.delete(id);drawEfficiency();persist()}};
 el('sampleLeague').onclick=async()=>{try{await accept(await (await fetch('./team-snapshot.json')).json(),true)}catch(e){status('Kayıtlı lig kopyası açılamadı: '+e.message)}};
-try{el('teamApi').value=localStorage.getItem('chaxini-team-api')||''}catch{}
+let apiBase=location.hostname==='tankosedag.github.io'?'https://chaxini-fantasy-basketbol-takvim.onrender.com':'';try{apiBase=(localStorage.getItem('chaxini-team-api')||apiBase).trim().replace(/\/$/,'')}catch{}
 (async()=>{const id=await cache.get('lastLeague');if(id){const l=await cache.get('league-'+id),c=l?await cache.get('catalog-'+(new Date().getMonth()>=7?new Date().getFullYear():new Date().getFullYear()-1)):null;if(l&&c){await accept({league:l,catalog:c},true);return}}try{await accept(await (await fetch('./team-snapshot.json')).json(),true)}catch{status('Kayıtlı veri açılamadı. Siteyi bir web sunucusu üzerinden aç.')}})();
 window.addEventListener('hashchange',()=>{if(location.hash==='#takim-analizi'&&catalog)render()});
 })();
