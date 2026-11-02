@@ -130,6 +130,26 @@ def start_job(lid):
   token=uuid.uuid4().hex;JOBS[token]={'lid':lid,'state':'loading'}
  threading.Thread(target=run_job,args=(token,lid),daemon=True).start()
  return token
+GAME_STATUS={}
+GAME_STATUS_LOCK=threading.Lock()
+def game_status(date):
+ if not re.fullmatch(r'\d{4}-\d{2}-\d{2}',date):raise ValueError('Geçersiz tarih')
+ dt.date.fromisoformat(date)
+ with GAME_STATUS_LOCK:
+  cached=GAME_STATUS.get(date)
+  if cached and time.time()-cached['fetched']<60:return cached['payload']
+ obj=json.loads(get('https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard?dates='+date.replace('-','')))
+ states={}
+ for event in obj.get('events',[]):
+  state=event.get('status',{}).get('type',{}).get('state','unknown')
+  for comp in event.get('competitions',[]):
+   for competitor in comp.get('competitors',[]):
+    nba=canon(competitor.get('team',{}).get('abbreviation',''))
+    if nba:states[nba]=state
+ payload={'date':date,'states':states,'updatedAt':now()}
+ with GAME_STATUS_LOCK:
+  GAME_STATUS.clear();GAME_STATUS[date]={'fetched':time.time(),'payload':payload}
+ return payload
 class Handler(SimpleHTTPRequestHandler):
  def __init__(self,*a,**kw):super().__init__(*a,directory=str(ROOT),**kw)
  def end_headers(self):
@@ -138,6 +158,10 @@ class Handler(SimpleHTTPRequestHandler):
   super().end_headers()
  def do_GET(self):
   u=urlparse(self.path)
+  if u.path=='/api/game-status':
+   try:self.reply(200,game_status(parse_qs(u.query).get('date',[''])[0]))
+   except Exception as e:self.reply(502,{'error':str(e)})
+   return
   if u.path=='/api/league':
    lid=parse_qs(u.query).get('id',[''])[0]
    force=parse_qs(u.query).get('refresh',['0'])[0]=='1'
