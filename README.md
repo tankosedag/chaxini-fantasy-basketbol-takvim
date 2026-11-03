@@ -23,4 +23,4 @@ Takviye önerilerinde en az **%65 maç katılımı** ve **10 dakika ortalama sü
 
 Site Türkçe ve İngilizce kullanılabilir. Telefonda ana ekrana eklenerek bağımsız uygulama görünümünde açılabilir. Kaydedilmiş takvim ve lig verileri çevrimdışı incelenebilir; güncel lig verilerini almak için internet bağlantısı ve **“Ligi yükle / yenile”** işlemi gerekir.
 
-**[Chaxini’yi aç →](https://chaxini-fantasy-basketbol-takvim.onrender.com)**
+**[Siteyi aç →](https://chaxini-fantasy-basketbol-takvim.onrender.com)**
