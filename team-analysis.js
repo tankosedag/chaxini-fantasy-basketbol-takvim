@@ -63,32 +63,33 @@ function drawRecommendations() {
   container.innerHTML = '<p class="ta-empty">Seçilen kategorilerde katılım, dakika ve sağlık koşullarını karşılayan müsait oyuncu bulunamadı.</p>';
   return;
  }
- const headers = categories.map(category => `<th scope="col">${labels[category]}</th>`).join('');
+ const columns = [
+  ['ÖNERİ', (_, index) => index + 1],
+  ...categories.map(category => [labels[category], player => format(player.stats[category], category === 'fg' || category === 'ft')]),
+  ['ORT. DK', player => format(player.mpg)],
+  ['MAÇ', player => `${player.gp}/${player.teamGp}`]
+ ];
+ const statusCodes = {Q:'Q', QUESTIONABLE:'Q', D:'D', DOUBTFUL:'D', P:'P', PROBABLE:'P', O:'O', OUT:'O'};
+ const headers = columns.map(([label]) => `<th scope="col">${label}</th>`).join('');
  const rows = recommendations.map(({player}, index) => {
-  const values = categories.map(category => `<td>${format(player.stats[category], category === 'fg' || category === 'ft')}</td>`).join('');
-  const availability = league.availability[player.id] === 'W'
-   ? '<abbr title="Waiver: talep sonucu ve uygunluk tarihi kontrol edilmeli.">W</abbr>'
-   : '<abbr title="Serbest oyuncu.">FA</abbr>';
+  const values = columns.map(([label, value]) => `<td><span class="ta-rec-label" aria-hidden="true">${label}</span>${value(player, index)}</td>`).join('');
   const teammates = catalog.players.filter(teammate => {
    const injury = String(teammate.injury || '').trim().toUpperCase();
    return teammate.id !== player.id && teammate.nba === player.nba &&
-    ['Q','QUESTIONABLE','D','DOUBTFUL','P','PROBABLE','O','OUT'].includes(injury) &&
-    teammate.positions.some(position => player.positions.includes(position));
+    Object.hasOwn(statusCodes, injury) && teammate.positions.some(position => player.positions.includes(position));
   }).slice(0, 3);
-  const context = teammates.length
-   ? `<details><summary>Rotasyon bilgisi</summary><p>Aynı NBA takımında benzer pozisyonda ${teammates.map(teammate => `${esc(teammate.name)} (${esc(teammate.injury)})`).join(', ')} var. Bu bir rotasyon fırsatı olabilir; dakika artışı doğrulanmadığından puana eklenmedi.</p></details>`
-   : '';
-  return `<tr>
-   <td>${playerName(player)}</td><td>${index + 1}</td>${values}
-   <td>${format(player.mpg)}</td><td>${player.gp}/${player.teamGp}</td><td>${format(player.participation, true)}</td>
-   <td>${format(player.rank)}</td><td>${availability}</td>
+  const context = teammates.length ? `<details><summary>Rotasyon bilgisi</summary>${teammates.map(teammate => {
+   const code = statusCodes[String(teammate.injury).trim().toUpperCase()];
+   return `<div>${esc(teammate.name)} (<span class="ta-rec-injury">${code}</span>)</div>`;
+  }).join('')}</details>` : '';
+  return `<tr role="row">
+   <td class="ta-rec-player-cell">${playerName(player)}</td>${values}
    <td class="ta-rec-context"><a href="${esc(player.newsUrl)}" target="_blank" rel="noopener noreferrer">Yahoo oyuncu haberleri ↗</a>${context}</td>
   </tr>`;
  }).join('');
- container.innerHTML = `<div class="ta-table-wrap"><table class="ta-stats ta-recommend-table" aria-label="Oyuncu önerileri">
-  <thead><tr><th scope="col">OYUNCU</th><th scope="col">ÖNERİ</th>${headers}<th scope="col">ORT. DK</th>
-   <th scope="col">MAÇ</th><th scope="col">KATILIM</th><th scope="col">YAHOO SIRASI</th><th scope="col">DURUM</th><th scope="col">BİLGİ</th></tr></thead>
-  <tbody>${rows}</tbody></table></div>`;
+ container.innerHTML = `<div class="ta-recommend-wrap"><table class="ta-stats ta-recommend-table" role="table" aria-label="Oyuncu önerileri">
+  <thead><tr role="row"><th scope="col">OYUNCU</th>${headers}<th scope="col">BİLGİ</th></tr></thead>
+  <tbody role="rowgroup">${rows}</tbody></table></div>`;
 }
 function comparisonTable(plan,dates,s){
  const keys=['mpg',...E.cats];
@@ -109,7 +110,7 @@ function drawEfficiency(){if(typeof data==='undefined'||!data)return; const sele
  const result=E.optimize(r,catalog.players,league.availability,slots,dates,s,locks,needs());
  el('effSummary').textContent=`${w.number}. hafta · ${fmt(date)} – ${fmt(w.end)} · ${slots.length} aktif kadro yeri · ${result.baseline.games} oynatılabilir oyuncu-maçı. Bir ekleme / bir bırakma senaryosu; henüz başlamamış maç varsayımıyla.`;
  el('effDays').innerHTML='<table class="ta-stats"><thead><tr><th>GÜN</th><th>MAÇI OLAN</th><th>OYNATILABİLEN</th><th>YEDEKTE KALAN</th>'+['pts','threes','reb','ast','stl','blk','to','fg','ft'].map(k=>'<th>'+labels[k]+'</th>').join('')+'</tr></thead><tbody>'+result.baseline.days.map(d=>`<tr><td>${fmt(d.date,{weekday:'short',day:'numeric',month:'short'})}</td><td>${d.scheduled}</td><td>${d.players.length}</td><td>${d.benched}</td>${E.cats.map(k=>`<td>${format(d.stats[k],k==='fg'||k==='ft')}</td>`).join('')}</tr>`).join('')+'</tbody></table>';
- el('effPlans').innerHTML=result.plans.length?result.plans.map(plan=>comparisonTable(plan,dates,s)).join(''):'<p class="ta-empty">Korunan oyuncuları bırakmadan ve %65 şartını bozmadan kalan haftada net maç kazandıran bir değişiklik bulunamadı.</p>';
+ el('effPlans').innerHTML=result.plans.length?result.plans.map(plan=>comparisonTable(plan,dates,s)).join(''):'<p class="ta-empty">Korunan oyuncuları bırakmadan ve %45 şartını bozmadan kalan haftada net maç kazandıran bir değişiklik bulunamadı.</p>';
  if(dates.includes(current)&&!(liveDay.date===current&&liveDay.states))el('effSummary').textContent+=' Bugünkü maçların durumu doğrulanana kadar yalnızca sonraki günler hesaba katılır.';
  if(!dayLoading&&(liveDay.date!==current||Date.now()-liveDay.checkedAt>=60000))updateDayStatus();
 

@@ -96,7 +96,7 @@ def refresh(lid):
  teams,lineups=parse_rosters(get(f'https://basketball.fantasysports.yahoo.com/nba/{lid}/startingrosters'),lid)
  players=fetch_catalog(lid);available={p['id']:p.pop('_availability') for p in players};warnings=[]
  try:games=team_games()
- except Exception as e:games={};warnings.append('NBA takım maç sayıları alınamadı. %65 şartı doğrulanamayan oyuncular önerilmez.')
+ except Exception as e:games={};warnings.append('NBA takım maç sayıları alınamadı. %45 şartı doğrulanamayan oyuncular önerilmez.')
  byid={p['id']:p for p in players}
  for team in teams:
   for pid,metadata in lineups[team['id']].items():

@@ -28,7 +28,7 @@ function normalize(player) {
 
 function inScope(p){return p.injury!=='NA'&&Number.isFinite(p.mpg)&&p.mpg>=10}
 function healthy(p){return !unavailable.has(p.injury)}
-function eligible(p){return inScope(p)&&healthy(p)&&Number.isFinite(p.participation)&&p.participation>=.65&&p.gp>0&&p.positions?.length&&Number.isFinite(p.rank)}
+function eligible(p){return inScope(p)&&healthy(p)&&Number.isFinite(p.participation)&&p.participation>=.45&&p.gp>0&&p.positions?.length&&Number.isFinite(p.rank)}
 function skill(p,k,base){if(k==='fg')return n(p,'fgm')!==null&&n(p,'fga')!==null?n(p,'fgm')-base.fg*n(p,'fga'):null;if(k==='ft')return n(p,'ftm')!==null&&n(p,'fta')!==null?n(p,'ftm')-base.ft*n(p,'fta'):null;let x=n(p,k);return x===null?null:k==='to'?-x:x}
 function rates(players){const sum=k=>players.reduce((s,p)=>s+(n(p,k)||0),0);return {fg:sum('fga')?sum('fgm')/sum('fga'):.46,ft:sum('fta')?sum('ftm')/sum('fta'):.78}}
 function recommend(players,availability,roster,needs,allowWaiver=false,limit=10){
