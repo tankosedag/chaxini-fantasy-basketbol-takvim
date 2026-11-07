@@ -4,12 +4,26 @@ const cats=['pts','threes','reb','ast','stl','blk','to','fg','ft'];
 const unavailable=new Set(['O','INJ','IL','NA','OFS','SUSP','D']);
 const n=(p,k)=>Number.isFinite(p.stats?.[k])?p.stats[k]:null;
 
-function normalize(p){
- const rawStats=p.rawStats||p.stats||{},rawMpg=Object.hasOwn(p,'rawMpg')?p.rawMpg:p.mpg;
- const valid=Number.isFinite(p.gp)&&Number.isFinite(p.teamGp)&&p.teamGp>0&&p.gp>=0&&p.gp<=p.teamGp;
- const ratio=valid?p.gp/p.teamGp:null,stats={...rawStats};
- for(const k of ['fgm','fga','ftm','fta','threes','pts','reb','ast','stl','blk','to'])stats[k]=valid?(Number.isFinite(p.seasonTotals?.[k])?p.seasonTotals[k]/p.teamGp:p.gp===0?0:Number.isFinite(rawStats[k])?rawStats[k]*ratio:null):null;
- return {...p,rawStats,rawMpg,stats,mpg:valid?(p.gp===0?0:Number.isFinite(rawMpg)?rawMpg*ratio:null):null,participation:ratio,averagesBasis:'nba-team-games',averagePrecision:p.seasonTotals?'season-totals':'rounded-yahoo-averages'};
+function normalize(player) {
+ const rawStats = player.rawStats || player.stats || {};
+ const rawMpg = Object.hasOwn(player, 'rawMpg') ? player.rawMpg : player.mpg;
+ const played = Number.isFinite(player.gp) && player.gp > 0;
+ const validParticipation = Number.isFinite(player.gp) && player.gp >= 0 &&
+  Number.isFinite(player.teamGp) && player.teamGp > 0 && player.gp <= player.teamGp;
+ const stats = {...rawStats};
+ for (const category of ['fgm','fga','ftm','fta','threes','pts','reb','ast','stl','blk','to']) {
+  const total = player.seasonTotals?.[category];
+  if (!played) stats[category] = null;
+  else if (Number.isFinite(total)) stats[category] = total / player.gp;
+  else stats[category] = Number.isFinite(rawStats[category]) ? rawStats[category] : null;
+ }
+ return {
+  ...player, rawStats, rawMpg, stats,
+  mpg: played && Number.isFinite(rawMpg) ? rawMpg : null,
+  participation: validParticipation ? player.gp / player.teamGp : null,
+  averagesBasis: 'player-games',
+  averagePrecision: player.seasonTotals ? 'season-totals' : 'rounded-yahoo-averages'
+ };
 }
 
 function inScope(p){return p.injury!=='NA'&&Number.isFinite(p.mpg)&&p.mpg>=10}
@@ -17,11 +31,11 @@ function healthy(p){return !unavailable.has(p.injury)}
 function eligible(p){return inScope(p)&&healthy(p)&&Number.isFinite(p.participation)&&p.participation>=.65&&p.gp>0&&p.positions?.length&&Number.isFinite(p.rank)}
 function skill(p,k,base){if(k==='fg')return n(p,'fgm')!==null&&n(p,'fga')!==null?n(p,'fgm')-base.fg*n(p,'fga'):null;if(k==='ft')return n(p,'ftm')!==null&&n(p,'fta')!==null?n(p,'ftm')-base.ft*n(p,'fta'):null;let x=n(p,k);return x===null?null:k==='to'?-x:x}
 function rates(players){const sum=k=>players.reduce((s,p)=>s+(n(p,k)||0),0);return {fg:sum('fga')?sum('fgm')/sum('fga'):.46,ft:sum('fta')?sum('ftm')/sum('fta'):.78}}
-function recommend(players,availability,roster,needs,allowWaiver=false){
+function recommend(players,availability,roster,needs,allowWaiver=false,limit=10){
  const base=rates(roster),pool=players.filter(p=>eligible(p)&&(availability[p.id]==='FA'||allowWaiver&&availability[p.id]==='W')&&needs.every(k=>skill(p,k,base)!==null));
  if(!pool.length)return [];
  const distributions=Object.fromEntries(needs.map(k=>{const a=pool.map(p=>skill(p,k,base)),mean=a.reduce((a,b)=>a+b,0)/a.length,sd=Math.sqrt(a.reduce((a,b)=>a+(b-mean)**2,0)/a.length)||1;return [k,{mean,sd}]}));
- return pool.map(p=>{const z=needs.reduce((s,k)=>s+(skill(p,k,base)-distributions[k].mean)/distributions[k].sd,0)/needs.length;return {player:p,score:z*.85+Math.max(0,(300-p.rank)/300)*.1+(p.participation||0)*.05-(p.injury==='Q'||p.injury==='GTD'?.3:0)}}).sort((a,b)=>b.score-a.score||a.player.rank-b.player.rank).filter((x,i)=>i===0||x.score>=.25).slice(0,6);
+ return pool.map(p=>{const z=needs.reduce((s,k)=>s+(skill(p,k,base)-distributions[k].mean)/distributions[k].sd,0)/needs.length;return {player:p,score:z*.85+Math.max(0,(300-p.rank)/300)*.1+(p.participation||0)*.05-(p.injury==='Q'||p.injury==='GTD'?.3:0)}}).sort((a,b)=>b.score-a.score||a.player.rank-b.player.rank).slice(0,limit);
 }
 function fits(p,slot){if(slot==='Util')return true;if(slot==='G')return p.positions.some(x=>x==='PG'||x==='SG');if(slot==='F')return p.positions.some(x=>x==='SF'||x==='PF');return p.positions.includes(slot)}
 function lineup(players,slots,date,schedule){
@@ -35,7 +49,7 @@ function totals(roster,slots,dates,schedule){const days=dates.map(d=>{const x=li
 function protectedPlayer(p,locks){return locks.has(p.id)||(p.rank!==null&&p.rank<=75)||(p.preRank!==null&&p.preRank<=50)}
 function optimize(roster,players,availability,slots,dates,schedule,locks,needs){
  const baseline=totals(roster,slots,dates,schedule),drops=roster.filter(p=>!protectedPlayer(p,locks)&&!['IL','IL+','NA'].includes(p.slot)).sort((a,b)=>(b.rank??9999)-(a.rank??9999)).slice(0,4);
- const adds=recommend(players,availability,roster,needs,false).map(x=>x.player);
+ const adds=recommend(players,availability,roster,needs,false,6).filter((entry,index)=>index===0||entry.score>=.25).map(entry=>entry.player);
  // Also inspect low-cost players with the largest remaining schedule, independent of category rank.
  players.filter(p=>eligible(p)&&availability[p.id]==='FA').sort((a,b)=>(schedule[b.nba]?.filter(d=>dates.includes(d)).length||0)-(schedule[a.nba]?.filter(d=>dates.includes(d)).length||0)||(a.rank??9999)-(b.rank??9999)).slice(0,18).forEach(p=>{if(!adds.some(a=>a.id===p.id))adds.push(p)});
  const plans=[];

@@ -23,7 +23,7 @@ async function accept(payload,fromSnapshot=false){
  if(!league.teams.some(t=>t.id===state.team))state.team=league.teams.some(t=>t.id===saved?.team)?saved.team:league.teams[0].id;
  locks=new Set(saved?.locks||[]);el('myTeam').innerHTML=league.teams.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');el('myTeam').value=state.team;el('teamWorkspace').hidden=false;
  const stamp=new Date(league.updatedAt).toLocaleString(window.ChaxiniI18n?.locale()||'tr-TR');status(`${league.name} · ${league.teams.length} takım · ${catalog.players.length} oyuncu · ${stamp}${fromSnapshot?' · Kayıtlı kopya':''}`);
- el('catalogStamp').textContent=`Oyuncu istatistikleri: ${new Date(catalog.updatedAt).toLocaleString(window.ChaxiniI18n?.locale()||'tr-TR')} · NBA takımının tüm maçları üzerinden ortalamalar; oynamadığı maçlar 0 dahil. FG/FT yüzdeleri isabet/deneme oranıdır. Yahoo sırası kaynak sıralamasıdır. Günlük eklenme yüzdesi kaynaktan alınamadı; öneri puanında kullanılmıyor.`;
+ el('catalogStamp').textContent=`Oyuncu istatistikleri: ${new Date(catalog.updatedAt).toLocaleString(window.ChaxiniI18n?.locale()||'tr-TR')} · Ortalamalar oyuncunun süre aldığı maçlardan hesaplanır. FG/FT yüzdeleri isabet/deneme oranıdır. Yahoo sırası kaynak sıralamasıdır. Günlük eklenme yüzdesi kaynaktan alınamadı; öneri puanında kullanılmıyor.`;
  render();
 }
 function leagueId(url){let u;try{u=new URL(url)}catch{throw Error('Tam Yahoo NBA lig bağlantısını yapıştır.')}if(u.protocol!=='https:'||u.hostname!=='basketball.fantasysports.yahoo.com')throw Error('Yalnızca https://basketball.fantasysports.yahoo.com/nba/… bağlantıları kabul edilir.');const m=u.pathname.match(/^\/nba\/(\d+)(?:\/|$)/);if(!m)throw Error('Lig numarası bağlantıda bulunamadı.');return m[1]}
@@ -55,8 +55,40 @@ function render(){if(!catalog||!league||!window.data&&typeof data==='undefined')
  el('poolNote').textContent=state.list==='available'?'FA: serbest oyuncu. W: waiver sürecinde; hemen alınabileceği varsayılmaz.':'İstatistikler ortak oyuncu havuzundan gelir; lig değişince oyuncunun ortalaması değil, kadro ve müsaitlik bilgisi değişir.';
  drawRecommendations();drawEfficiency();persist();
 }
-function drawRecommendations(){const r=roster(),recs=E.recommend(catalog.players,league.availability,r,needs(),el('includeWaiver').checked);
- el('recommendations').innerHTML=recs.length?recs.map((x,i)=>{const p=x.player,injured=catalog.players.filter(q=>q.id!==p.id&&q.nba===p.nba&&['Q','QUESTIONABLE','D','DOUBTFUL','P','PROBABLE','O','OUT'].includes(String(q.injury||'').trim().toUpperCase())&&q.positions.some(pos=>p.positions.includes(pos))).slice(0,3);return `<article class="ta-rec"><span class="ta-rank">${i+1}</span><div>${playerName(p)}<p>${needs().map(k=>`${labels[k]}: <b>${format(p.stats[k],k==='fg'||k==='ft')}</b>`).join(' · ')} · Yahoo sıra ${format(p.rank)}</p><p>${p.gp}/${p.teamGp} maç · katılım ${format(p.participation,true)} · ${format(p.mpg)} dk · ${league.availability[p.id]==='W'?'Waiver: talep sonucu ve uygunluk tarihi kontrol edilmeli.':'Serbest oyuncu.'}${p.injury?' '+esc(p.injury)+' durumu nedeniyle belirsizlik indirimi uygulandı.':''}</p>${injured.length?`<p>Aynı NBA takımında benzer pozisyonda ${injured.map(q=>esc(q.name)+' ('+esc(q.injury)+')').join(', ')} var. Bu bir rotasyon fırsatı olabilir; dakika artışı doğrulanmadığından puana eklenmedi.</p>`:''}<a href="${esc(p.newsUrl)}" target="_blank" rel="noopener noreferrer">Yahoo oyuncu haberleri ↗</a></div></article>`}).join(''):'<p class="ta-empty">Seçilen kategorilerde %65 katılım ve sağlık şartlarını doğrulayan müsait oyuncu bulunamadı. Şartları bozan bir oyuncuyu minimum sayıyı tamamlamak için önermiyoruz.</p>';
+function drawRecommendations() {
+ const categories = needs();
+ const recommendations = E.recommend(catalog.players, league.availability, roster(), categories, el('includeWaiver').checked);
+ const container = el('recommendations');
+ if (!recommendations.length) {
+  container.innerHTML = '<p class="ta-empty">Seçilen kategorilerde katılım, dakika ve sağlık koşullarını karşılayan müsait oyuncu bulunamadı.</p>';
+  return;
+ }
+ const headers = categories.map(category => `<th scope="col">${labels[category]}</th>`).join('');
+ const rows = recommendations.map(({player}, index) => {
+  const values = categories.map(category => `<td>${format(player.stats[category], category === 'fg' || category === 'ft')}</td>`).join('');
+  const availability = league.availability[player.id] === 'W'
+   ? '<abbr title="Waiver: talep sonucu ve uygunluk tarihi kontrol edilmeli.">W</abbr>'
+   : '<abbr title="Serbest oyuncu.">FA</abbr>';
+  const teammates = catalog.players.filter(teammate => {
+   const injury = String(teammate.injury || '').trim().toUpperCase();
+   return teammate.id !== player.id && teammate.nba === player.nba &&
+    ['Q','QUESTIONABLE','D','DOUBTFUL','P','PROBABLE','O','OUT'].includes(injury) &&
+    teammate.positions.some(position => player.positions.includes(position));
+  }).slice(0, 3);
+  const context = teammates.length
+   ? `<details><summary>Rotasyon bilgisi</summary><p>Aynı NBA takımında benzer pozisyonda ${teammates.map(teammate => `${esc(teammate.name)} (${esc(teammate.injury)})`).join(', ')} var. Bu bir rotasyon fırsatı olabilir; dakika artışı doğrulanmadığından puana eklenmedi.</p></details>`
+   : '';
+  return `<tr>
+   <td>${playerName(player)}</td><td>${index + 1}</td>${values}
+   <td>${format(player.mpg)}</td><td>${player.gp}/${player.teamGp}</td><td>${format(player.participation, true)}</td>
+   <td>${format(player.rank)}</td><td>${availability}</td>
+   <td class="ta-rec-context"><a href="${esc(player.newsUrl)}" target="_blank" rel="noopener noreferrer">Yahoo oyuncu haberleri ↗</a>${context}</td>
+  </tr>`;
+ }).join('');
+ container.innerHTML = `<div class="ta-table-wrap"><table class="ta-stats ta-recommend-table" aria-label="Oyuncu önerileri">
+  <thead><tr><th scope="col">OYUNCU</th><th scope="col">ÖNERİ</th>${headers}<th scope="col">ORT. DK</th>
+   <th scope="col">MAÇ</th><th scope="col">KATILIM</th><th scope="col">YAHOO SIRASI</th><th scope="col">DURUM</th><th scope="col">BİLGİ</th></tr></thead>
+  <tbody>${rows}</tbody></table></div>`;
 }
 function comparisonTable(plan,dates,s){
  const keys=['mpg',...E.cats];
