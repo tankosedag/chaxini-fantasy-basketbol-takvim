@@ -28,6 +28,9 @@ function normalize(player) {
 
 function inScope(p){return p.injury!=='NA'&&Number.isFinite(p.mpg)&&p.mpg>=10}
 function healthy(p){return !unavailable.has(p.injury)}
+function inactiveSlot(slot) {
+ return ['IL','IL+','IR','IR+','NA'].includes(String(slot ?? '').replace(/\s+/g,'').toUpperCase());
+}
 function eligible(p){return inScope(p)&&healthy(p)&&Number.isFinite(p.participation)&&p.participation>=.45&&p.gp>0&&p.positions?.length&&Number.isFinite(p.rank)}
 function skill(p,k,base){if(k==='fg')return n(p,'fgm')!==null&&n(p,'fga')!==null?n(p,'fgm')-base.fg*n(p,'fga'):null;if(k==='ft')return n(p,'ftm')!==null&&n(p,'fta')!==null?n(p,'ftm')-base.ft*n(p,'fta'):null;let x=n(p,k);return x===null?null:k==='to'?-x:x}
 function rates(players){const sum=k=>players.reduce((s,p)=>s+(n(p,k)||0),0);return {fg:sum('fga')?sum('fgm')/sum('fga'):.46,ft:sum('fta')?sum('ftm')/sum('fta'):.78}}
@@ -39,7 +42,7 @@ function recommend(players,availability,roster,needs,allowWaiver=false,limit=10)
 }
 function fits(p,slot){if(slot==='Util')return true;if(slot==='G')return p.positions.some(x=>x==='PG'||x==='SG');if(slot==='F')return p.positions.some(x=>x==='SF'||x==='PF');return p.positions.includes(slot)}
 function lineup(players,slots,date,schedule){
- const active=players.filter(p=>inScope(p)&&healthy(p)&&schedule[p.nba]?.includes(date)&&!['IL','IL+','NA'].includes(p.slot)).sort((a,b)=>(a.rank??9999)-(b.rank??9999));
+ const active=players.filter(p=>inScope(p)&&healthy(p)&&schedule[p.nba]?.includes(date)&&!inactiveSlot(p.slot)).sort((a,b)=>(a.rank??9999)-(b.rank??9999));
  const match=new Array(slots.length).fill(null);
  function assign(p,seen){for(let i=0;i<slots.length;i++){if(seen.has(i)||!fits(p,slots[i]))continue;seen.add(i);if(!match[i]||assign(match[i],seen)){match[i]=p;return true}}return false}
  active.forEach(p=>assign(p,new Set()));return {players:match.filter(Boolean),scheduled:active.length,benched:active.length-match.filter(Boolean).length};
@@ -67,9 +70,10 @@ function matchupScore(own, opponent) {
  };
 }
 
-function matchupUpgrades({roster, players, availability, slots, dates, schedule, locks, own, opponent}) {
+function matchupUpgrades({roster, players, availability, slots, dates, schedule, locks, own, opponent, selectedCategory}) {
  const score = matchupScore(own, opponent);
  const groups = cats.filter(category => {
+  if (selectedCategory && category !== selectedCategory) return false;
   const outcome = score.outcomes[category];
   if (outcome === null || outcome > 0) return false;
   const sum = own[category] + opponent[category];
@@ -80,7 +84,7 @@ function matchupUpgrades({roster, players, availability, slots, dates, schedule,
  const rosterIds = new Set(roster.map(player => player.id));
  const adds = players.filter(player => eligible(player) && availability[player.id] === 'FA' &&
   !rosterIds.has(player.id) && dates.some(date => schedule[player.nba]?.includes(date)));
- const drops = roster.filter(player => !protectedPlayer(player, locks) && !['IL','IL+','NA'].includes(player.slot));
+ const drops = roster.filter(player => !protectedPlayer(player, locks) && !inactiveSlot(player.slot));
  for (const drop of drops) {
   const remaining = roster.filter(player => player.id !== drop.id);
   for (const add of adds) {
@@ -109,7 +113,7 @@ function matchupUpgrades({roster, players, availability, slots, dates, schedule,
 }
 
 function optimize(roster,players,availability,slots,dates,schedule,locks,needs){
- const baseline=totals(roster,slots,dates,schedule),drops=roster.filter(p=>!protectedPlayer(p,locks)&&!['IL','IL+','NA'].includes(p.slot)).sort((a,b)=>(b.rank??9999)-(a.rank??9999)).slice(0,4);
+ const baseline=totals(roster,slots,dates,schedule),drops=roster.filter(p=>!protectedPlayer(p,locks)&&!inactiveSlot(p.slot)).sort((a,b)=>(b.rank??9999)-(a.rank??9999)).slice(0,4);
  const adds=recommend(players,availability,roster,needs,false,6).filter((entry,index)=>index===0||entry.score>=.25).map(entry=>entry.player);
  // Also inspect low-cost players with the largest remaining schedule, independent of category rank.
  players.filter(p=>eligible(p)&&availability[p.id]==='FA').sort((a,b)=>(schedule[b.nba]?.filter(d=>dates.includes(d)).length||0)-(schedule[a.nba]?.filter(d=>dates.includes(d)).length||0)||(a.rank??9999)-(b.rank??9999)).slice(0,18).forEach(p=>{if(!adds.some(a=>a.id===p.id))adds.push(p)});

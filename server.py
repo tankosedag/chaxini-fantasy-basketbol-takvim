@@ -22,6 +22,12 @@ def get(url):
   raw=r.read(8_000_000)
  return raw.decode('utf-8','replace')
 def text(n):return ' '.join(n.text_content().split())
+def roster_slot(value):
+    return re.sub(r'\s+', '', value).upper()
+
+def inactive_slot(slot):
+    return roster_slot(slot) in {'IL','IL+','IR','IR+','NA'}
+
 def num(v):
  try:return float(v.replace('%',''))
  except (ValueError,AttributeError):return None
@@ -62,7 +68,7 @@ def parse_rosters(source,league):
   for row in t.xpath('.//tr[td]'):
    cells=row.xpath('./td');p=identity(cells[-1]);slot=text(cells[0])
    if p:ids.append(p['id']);line[p['id']]={'slot':slot,**p}
-   if slot not in {'BN','IL','IL+','NA'}:slots.append(slot)
+   if roster_slot(slot) != 'BN' and not inactive_slot(slot):slots.append(slot)
   teams.append({'id':tid,'name':name,'playerIds':ids,'slots':slots});lineups[tid]=line
  if not teams:raise ValueError('Kadro verisi okunamadı. Lig özel olabilir veya Yahoo sayfa düzeni değişmiş olabilir.')
  return teams,lineups
@@ -192,6 +198,29 @@ def parse_matchup(source, league, team, week):
     return {'team': team, 'opponent': opponent, 'week': int(week),
             'start': min(dates), 'end': max(dates)}
 
+def parse_current_roster(source, league, team):
+    document = html.fromstring(source)
+    canonical = document.xpath('//link[@rel="canonical"]/@href')
+    if not any(urlparse(url).path.rstrip('/') == f'/nba/{league}/{team}' for url in canonical):
+        raise ValueError('Yahoo takım sayfası doğrulanamadı.')
+    rows = document.xpath('//table[contains(concat(" ",normalize-space(@class)," ")," ysf-rosterswapper ")]/tbody/tr[td]')
+    lineup, slots = {}, []
+    for row in rows:
+        cells = row.xpath('./td')
+        if len(cells) < 2:
+            continue
+        slot = text(cells[0])
+        if not slot:
+            continue
+        player = identity(cells[1])
+        if player:
+            lineup[player['id']] = {'slot': slot, 'injury': player['injury']}
+        if roster_slot(slot) != 'BN' and not inactive_slot(slot):
+            slots.append(slot)
+    if not lineup or not slots:
+        raise ValueError('Yahoo güncel kadrosu okunamadı.')
+    return {'lineup': lineup, 'slots': slots}
+
 def league_matchup(league, team, week):
     if not (re.fullmatch(r'\d{1,10}', league) and re.fullmatch(r'\d{1,4}', team)
             and re.fullmatch(r'\d{1,2}', week) and 1 <= int(week) <= 52):
@@ -203,6 +232,10 @@ def league_matchup(league, team, week):
             return cached[1]
     url = f'https://basketball.fantasysports.yahoo.com/nba/{league}/matchup?date=totals&week={week}&mid1={team}'
     result = parse_matchup(get(url), league, team, week)
+    teams = (team, result['opponent'])
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        pages = pool.map(get, (f'https://basketball.fantasysports.yahoo.com/nba/{league}/{tid}' for tid in teams))
+        result['rosters'] = {tid: parse_current_roster(page, league, tid) for tid, page in zip(teams, pages)}
     with MATCHUP_LOCK:
         MATCHUPS.pop(key, None)
         MATCHUPS[key] = (time.monotonic(), result)
