@@ -150,6 +150,66 @@ def game_status(date):
  with GAME_STATUS_LOCK:
   GAME_STATUS.clear();GAME_STATUS[date]={'fetched':time.time(),'payload':payload}
  return payload
+
+MATCHUPS = {}
+MATCHUP_LOCK = threading.Lock()
+
+def parse_matchup(source, league, team, week):
+    document = html.fromstring(source)
+    selected_weeks = document.xpath('//select/option[@selected]/@value')
+    if not any(parse_qs(urlparse(link).query).get('week') == [week] for link in selected_weeks):
+        raise ValueError('Yahoo eşleşme haftası doğrulanamadı.')
+
+    required = {'FG%', 'FT%', '3PTM', 'PTS', 'REB', 'AST', 'ST', 'BLK', 'TO'}
+    for table in document.xpath('//table[thead and tbody]'):
+        headers = {text(cell) for cell in table.xpath('./thead/tr/th')}
+        if not required.issubset(headers):
+            continue
+        teams = []
+        for row in table.xpath('./tbody/tr'):
+            for href in row.xpath('./td[1]//a/@href'):
+                match = re.fullmatch(rf'/nba/{league}/(\d+)/?', urlparse(href).path)
+                if match:
+                    teams.append(match[1])
+                    break
+        if len(teams) == 2 and len(set(teams)) == 2 and team in teams:
+            opponent = next(other for other in teams if other != team)
+            break
+    else:
+        raise ValueError('Yahoo haftalık rakibi bulunamadı.')
+
+    dates = set()
+    for href in document.xpath('//a[contains(@href,"date=")]/@href'):
+        link = urlparse(href)
+        query = parse_qs(link.query)
+        date = query.get('date', [''])[0]
+        if (link.path == f'/nba/{league}/matchup' and query.get('week') == [week]
+                and {query.get('mid1', [''])[0], query.get('mid2', [''])[0]} == set(teams)
+                and re.fullmatch(r'\d{4}-\d{2}-\d{2}', date)):
+            dates.add(date)
+    if not dates:
+        raise ValueError('Yahoo eşleşme tarihleri bulunamadı.')
+    return {'team': team, 'opponent': opponent, 'week': int(week),
+            'start': min(dates), 'end': max(dates)}
+
+def league_matchup(league, team, week):
+    if not (re.fullmatch(r'\d{1,10}', league) and re.fullmatch(r'\d{1,4}', team)
+            and re.fullmatch(r'\d{1,2}', week) and 1 <= int(week) <= 52):
+        raise ValueError('Geçersiz lig, takım veya hafta.')
+    key = (league, team, week)
+    with MATCHUP_LOCK:
+        cached = MATCHUPS.get(key)
+        if cached and time.monotonic() - cached[0] < 300:
+            return cached[1]
+    url = f'https://basketball.fantasysports.yahoo.com/nba/{league}/matchup?date=totals&week={week}&mid1={team}'
+    result = parse_matchup(get(url), league, team, week)
+    with MATCHUP_LOCK:
+        MATCHUPS.pop(key, None)
+        MATCHUPS[key] = (time.monotonic(), result)
+        if len(MATCHUPS) > 128:
+            MATCHUPS.pop(next(iter(MATCHUPS)))
+    return result
+
 class Handler(SimpleHTTPRequestHandler):
  def __init__(self,*a,**kw):super().__init__(*a,directory=str(ROOT),**kw)
  def end_headers(self):
@@ -158,6 +218,13 @@ class Handler(SimpleHTTPRequestHandler):
   super().end_headers()
  def do_GET(self):
   u=urlparse(self.path)
+  if u.path=='/api/matchup':
+   params = parse_qs(u.query)
+   try:
+    self.reply(200, league_matchup(*(params.get(key, [''])[0] for key in ('id','team','week'))))
+   except Exception as e:
+    self.reply(502, {'error': str(e)})
+   return
   if u.path=='/api/game-status':
    try:self.reply(200,game_status(parse_qs(u.query).get('date',[''])[0]))
    except Exception as e:self.reply(502,{'error':str(e)})

@@ -47,6 +47,67 @@ function lineup(players,slots,date,schedule){
 function estimate(players){const sum={};for(const k of ['fgm','fga','ftm','fta','threes','pts','reb','ast','stl','blk','to'])sum[k]=players.every(p=>n(p,k)!==null)?players.reduce((s,p)=>s+n(p,k),0):null;sum.fg=sum.fga?sum.fgm/sum.fga:null;sum.ft=sum.fta?sum.ftm/sum.fta:null;return sum}
 function totals(roster,slots,dates,schedule){const days=dates.map(d=>{const x=lineup(roster,slots,d,schedule);return {date:d,...x,stats:estimate(x.players)}});return {days,games:days.reduce((s,x)=>s+x.players.length,0)}}
 function protectedPlayer(p,locks){return locks.has(p.id)||(p.rank!==null&&p.rank<=75)||(p.preRank!==null&&p.preRank<=50)}
+
+function compareCategory(category, own, opponent) {
+ if (!Number.isFinite(own) || !Number.isFinite(opponent)) return null;
+ const margin = category === 'to' ? opponent - own : own - opponent;
+ return Math.abs(margin) < 1e-9 ? 0 : Math.sign(margin);
+}
+
+function matchupScore(own, opponent) {
+ const outcomes = Object.fromEntries(cats.map(category => [
+  category, compareCategory(category, own[category], opponent[category])
+ ]));
+ const results = Object.values(outcomes);
+ return {
+  outcomes,
+  wins: results.filter(result => result === 1).length,
+  losses: results.filter(result => result === -1).length,
+  known: results.some(result => result !== null)
+ };
+}
+
+function matchupUpgrades({roster, players, availability, slots, dates, schedule, locks, own, opponent}) {
+ const score = matchupScore(own, opponent);
+ const groups = cats.filter(category => {
+  const outcome = score.outcomes[category];
+  if (outcome === null || outcome > 0) return false;
+  const sum = own[category] + opponent[category];
+  return sum === 0 || Math.abs(own[category] - opponent[category]) <= sum * .035 + 1e-9;
+ }).map(category => ({category, options: new Map()}));
+ if (!groups.length) return [];
+
+ const rosterIds = new Set(roster.map(player => player.id));
+ const adds = players.filter(player => eligible(player) && availability[player.id] === 'FA' &&
+  !rosterIds.has(player.id) && dates.some(date => schedule[player.nba]?.includes(date)));
+ const drops = roster.filter(player => !protectedPlayer(player, locks) && !['IL','IL+','NA'].includes(player.slot));
+ for (const drop of drops) {
+  const remaining = roster.filter(player => player.id !== drop.id);
+  for (const add of adds) {
+   const swapped = [...remaining, {...add, slot: drop.slot}];
+   const appearances = dates.flatMap(date => lineup(swapped, slots, date, schedule).players);
+   if (!appearances.some(player => player.id === add.id)) continue;
+   const projected = estimate(appearances);
+   const after = matchupScore(projected, opponent);
+   for (const {category, options} of groups) {
+    if (after.outcomes[category] !== 1) continue;
+    const value = projected[category];
+    const margin = category === 'to' ? opponent[category] - value : value - opponent[category];
+    const previous = options.get(add.id);
+    if (!previous || after.wins - after.losses > previous.score.wins - previous.score.losses ||
+        (after.wins - after.losses === previous.score.wins - previous.score.losses && margin > previous.margin)) {
+     options.set(add.id, {add, drop, value, margin, score: after});
+    }
+   }
+  }
+ }
+ return groups.map(({category, options}) => ({
+  category,
+  options: [...options.values()].sort((a,b) =>
+   (b.score.wins - b.score.losses) - (a.score.wins - a.score.losses) || b.margin - a.margin)
+ }));
+}
+
 function optimize(roster,players,availability,slots,dates,schedule,locks,needs){
  const baseline=totals(roster,slots,dates,schedule),drops=roster.filter(p=>!protectedPlayer(p,locks)&&!['IL','IL+','NA'].includes(p.slot)).sort((a,b)=>(b.rank??9999)-(a.rank??9999)).slice(0,4);
  const adds=recommend(players,availability,roster,needs,false,6).filter((entry,index)=>index===0||entry.score>=.25).map(entry=>entry.player);
@@ -63,5 +124,5 @@ function optimize(roster,players,availability,slots,dates,schedule,locks,needs){
  }
  return {baseline,plans:plans.sort((a,b)=>b.gain-a.gain||a.rankCost-b.rankCost).filter((p,i,a)=>a.findIndex(q=>q.add.id===p.add.id)===i).slice(0,6)};
 }
-const api={cats,normalize,inScope,healthy,eligible,recommend,rates,fits,lineup,estimate,totals,protectedPlayer,optimize};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.TeamEngine=api;
+const api={cats,normalize,inScope,healthy,eligible,recommend,rates,fits,lineup,estimate,totals,protectedPlayer,optimize,matchupScore,matchupUpgrades};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.TeamEngine=api;
 })(typeof window==='undefined'?{}:window);

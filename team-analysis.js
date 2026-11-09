@@ -14,11 +14,11 @@ async function updateDayStatus(){
  try{const r=await fetch(`${apiBase}/api/game-status?date=${date}`,{cache:'no-store',signal:controller.signal});if(!r.ok)throw Error('status');const payload=await r.json();if(payload.date!==date||!payload.states)throw Error('status');liveDay={date,states:payload.states,checkedAt:Date.now()}}catch{liveDay={date,states:null,checkedAt:Date.now()}}finally{clearTimeout(timer);dayLoading=false;if(catalog)drawEfficiency()}
 }
 function schedule(){return Object.fromEntries(data.teams.map(t=>[t,[...new Set(data.weeks.flatMap(w=>w.games[t].map(g=>g.date)))].sort()]))}
-function roster(){const t=league?.teams.find(t=>t.id===state.team);return (t?.playerIds||[]).map(id=>{const p=catalog.players.find(x=>x.id===id);return p?{...p,slot:league.lineups?.[t.id]?.[id]||'BN'}:null}).filter(p=>p&&E.inScope(p))}
+function roster(t=league?.teams.find(t=>t.id===state.team)){return (t?.playerIds||[]).map(id=>{const p=catalog.players.find(x=>x.id===id);return p?{...p,slot:league.lineups?.[t.id]?.[id]||'BN'}:null}).filter(p=>p&&E.inScope(p))}
 function persist(){try{localStorage.setItem('chaxini-team-state',JSON.stringify({team:state.team,locks:[...locks]}))}catch{}}
 async function accept(payload,fromSnapshot=false){
  if(!payload?.catalog?.players?.length||!payload?.league?.teams?.length)throw Error('Geçerli lig ve oyuncu verisi bulunamadı.');
- catalog={...payload.catalog,players:payload.catalog.players.map(E.normalize)};league=payload.league;el('leagueUrl').value='https://basketball.fantasysports.yahoo.com/nba/'+league.id;
+ catalog={...payload.catalog,players:payload.catalog.players.map(E.normalize)};league=payload.league;matchupRequests.clear();el('leagueUrl').value='https://basketball.fantasysports.yahoo.com/nba/'+league.id;
  await cache.put('catalog-'+catalog.season,catalog);await cache.put('league-'+league.id,league);await cache.put('lastLeague',league.id);
  if(!league.teams.some(t=>t.id===state.team))state.team=league.teams.some(t=>t.id===saved?.team)?saved.team:league.teams[0].id;
  locks=new Set(saved?.locks||[]);el('myTeam').innerHTML=league.teams.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}</option>`).join('');el('myTeam').value=state.team;el('teamWorkspace').hidden=false;
@@ -91,29 +91,122 @@ function drawRecommendations() {
   <thead><tr role="row"><th scope="col">OYUNCU</th>${headers}<th scope="col">BİLGİ</th></tr></thead>
   <tbody role="rowgroup">${rows}</tbody></table></div>`;
 }
-function comparisonTable(plan,dates,s){
- const keys=['mpg',...E.cats];
- const value=(player,key)=>key==='mpg'?player.mpg:player.stats?.[key];
- const dayNames=window.ChaxiniI18n?.lang()==='en'?['Sun','Mon','Tue','Wed','Thu','Fri','Sat']:['Paz','Pzt','Sal','Çar','Per','Cum','Cmt'];
- const games=player=>(s[player.nba]||[]).filter(d=>dates.includes(d)).map(d=>dayNames[new Date(d+'T12:00:00Z').getUTCDay()]).join(' · ')||'—';
- const stat=(player,key,compare)=>{const v=value(player,key),base=value(plan.drop,key),up=Number.isFinite(v)&&Number.isFinite(base)&&v>base,down=Number.isFinite(v)&&Number.isFinite(base)&&v<base;
-  const arrow=compare&&(up||down)?` <span class="ta-stat-arrow ${(key==='to'?down:up)?'positive':'negative'}" aria-label="${up?'Daha yüksek':'Daha düşük'}">${up?'↑':'↓'}</span>`:'';
-  return `<td>${format(v,key==='fg'||key==='ft')}${arrow}</td>`};
- return `<article class="ta-comparison"><div class="ta-table-wrap"><table class="ta-stats ta-compare-table"><thead><tr><th>OYUNCU</th><th>İŞLEM</th><th>MAÇ GÜNLERİ</th><th>NET MAÇ</th>${keys.map(k=>`<th>${k==='mpg'?'ORT. DK':k==='fg'?'FG%':k==='ft'?'FT%':'ORT. '+({pts:'PTS',threes:'3PTM',reb:'REB',ast:'AST',stl:'ST',blk:'BLK',to:'TO'}[k])}</th>`).join('')}</tr></thead><tbody><tr><td>${playerName(plan.drop)}</td><td>Kadrodaki</td><td class="ta-game-days">${games(plan.drop)}</td><td>—</td>${keys.map(k=>stat(plan.drop,k,false)).join('')}</tr><tr class="ta-add-row"><td>${playerName(plan.add)}</td><td>Önerilen</td><td class="ta-game-days">${games(plan.add)}</td><td class="positive">+${plan.gain}</td>${keys.map(k=>stat(plan.add,k,true)).join('')}</tr></tbody></table></div></article>`;
+const matchupRequests = new Map();
+function getMatchup(week, team) {
+ const id = league.id;
+ const key = `${id}/${week.number}/${team.id}`;
+ const cached = matchupRequests.get(key);
+ if (cached && (cached.pending || Date.now() - cached.checkedAt < 300000)) return cached;
+ const entry = {pending: true, checkedAt: Date.now(), data: null};
+ matchupRequests.set(key, entry);
+ if (matchupRequests.size > 64) matchupRequests.delete(matchupRequests.keys().next().value);
+ const params = new URLSearchParams({id, team: team.id, week: week.number});
+ const controller = new AbortController();
+ const timer = setTimeout(() => controller.abort(), 35000);
+ fetch(`${apiBase}/api/matchup?${params}`, {cache: 'no-store', signal: controller.signal})
+  .then(async response => {
+   if (!response.ok) return;
+   const match = await response.json();
+   if (match.team === team.id && match.week === week.number && match.start === week.start && match.end === week.end) {
+    entry.data = match;
+   }
+  }).catch(() => {}).finally(() => {
+   clearTimeout(timer);
+   entry.pending = false;
+   entry.checkedAt = Date.now();
+   if (catalog && league.id === id && state.team === team.id) drawEfficiency();
+  });
+ return entry;
 }
-function drawEfficiency(){if(typeof data==='undefined'||!data)return; const selected=el('effDate').value,current=today(),date=selected<current?current:selected,w=data.weeks.find(w=>date>=w.start&&date<=w.end);if(!w){el('effSummary').textContent='Seçilen tarih kayıtlı NBA takviminin dışında.';el('effDays').innerHTML='';el('effPlans').innerHTML='';return}
- const dates=[];for(let d=date;d<=w.end;d=shiftDate(d,1))dates.push(d);
- const r=roster(),t=league.teams.find(t=>t.id===state.team),s=schedule(),slots=t.slots.length?t.slots:['PG','SG','G','SF','PF','F','C','C','Util','Util'];
- // Today's started/completed games are excluded. If unavailable, today's games
- // are withheld rather than presenting completed games as upcoming.
- for(const nba of Object.keys(s))s[nba]=s[nba].filter(d=>d!==current||(liveDay.date===current&&liveDay.states?.[nba]==='pre'));
- const result=E.optimize(r,catalog.players,league.availability,slots,dates,s,locks,needs());
- el('effSummary').textContent=`${w.number}. hafta · ${fmt(date)} – ${fmt(w.end)} · ${slots.length} aktif kadro yeri · ${result.baseline.games} oynatılabilir oyuncu-maçı. Bir ekleme / bir bırakma senaryosu; henüz başlamamış maç varsayımıyla.`;
- el('effDays').innerHTML='<table class="ta-stats"><thead><tr><th>GÜN</th><th>MAÇI OLAN</th><th>OYNATILABİLEN</th><th>YEDEKTE KALAN</th>'+['pts','threes','reb','ast','stl','blk','to','fg','ft'].map(k=>'<th>'+labels[k]+'</th>').join('')+'</tr></thead><tbody>'+result.baseline.days.map(d=>`<tr><td>${fmt(d.date,{weekday:'short',day:'numeric',month:'short'})}</td><td>${d.scheduled}</td><td>${d.players.length}</td><td>${d.benched}</td>${E.cats.map(k=>`<td>${format(d.stats[k],k==='fg'||k==='ft')}</td>`).join('')}</tr>`).join('')+'</tbody></table>';
- el('effPlans').innerHTML=result.plans.length?result.plans.map(plan=>comparisonTable(plan,dates,s)).join(''):'<p class="ta-empty">Korunan oyuncuları bırakmadan ve %45 şartını bozmadan kalan haftada net maç kazandıran bir değişiklik bulunamadı.</p>';
- if(dates.includes(current)&&!(liveDay.date===current&&liveDay.states))el('effSummary').textContent+=' Bugünkü maçların durumu doğrulanana kadar yalnızca sonraki günler hesaba katılır.';
- if(!dayLoading&&(liveDay.date!==current||Date.now()-liveDay.checkedAt>=60000))updateDayStatus();
 
+function activeSlots(team) {
+ return team.slots?.length ? team.slots : ['PG','SG','G','SF','PF','F','C','C','Util','Util'];
+}
+
+function statText(value, category) {
+ return format(value, category === 'fg' || category === 'ft');
+}
+
+function efficiencyTable(baseline, own, opponent, rival, score) {
+ const dailyRows = baseline.days.map(day => `<tr><td>${fmt(day.date, {weekday:'short',day:'numeric',month:'short'})}</td>
+  <td>${day.scheduled}</td><td>${day.players.length}</td><td>${day.benched}</td>
+  ${E.cats.map(category => `<td>${statText(day.stats[category], category)}</td>`).join('')}<td></td></tr>`).join('');
+ const sumRow = (title, games, stats, name='') => `<tr class="ta-week-total">
+  <td><strong>${title}</strong>${name ? `<small data-no-translate>${esc(name)}</small>` : ''}</td>
+  <td></td><td>${games}</td><td></td>
+  ${E.cats.map(category => `<td>${statText(stats[category], category)}</td>`).join('')}<td></td></tr>`;
+ const scoreCells = score ? E.cats.map(category => {
+  const result = score.outcomes[category];
+  const icon = result === 1 ? '↑' : result === -1 ? '↓' : '—';
+  const title = result === 1 ? 'Takımın önde' : result === -1 ? 'Rakip önde' : result === 0 ? 'Berabere' : 'Veri yok';
+  return `<td class="${result === 1 ? 'positive' : result === -1 ? 'negative' : ''}" title="${title}">${icon}</td>`;
+ }).join('') : '';
+ const matchRows = opponent ? `<tr class="ta-match-arrows"><td colspan="4"></td>${scoreCells}
+  <td class="ta-match-score">${score.known ? `${score.wins}-${score.losses}` : '—'}</td></tr>
+  ${sumRow('Rakip toplamı', opponent.games, opponent.stats, rival.name)}` : '';
+ return `<table class="ta-stats ta-eff-table"><thead><tr><th>GÜN</th><th>MAÇI OLAN</th><th>OYNATILABİLEN</th><th>YEDEKTE KALAN</th>
+  ${E.cats.map(category => `<th>${labels[category]}</th>`).join('')}<th>TAHMİNİ SKOR</th></tr></thead>
+  <tbody>${dailyRows}${sumRow('Takım toplamı', baseline.games, own)}${matchRows}</tbody></table>`;
+}
+
+function matchupSuggestions(groups, own, opponent) {
+ if (!groups.length) return '<p class="ta-empty">%3,5 fark sınırında kazanılabilecek kategori yok.</p>';
+ return groups.map(({category, options}) => `<section class="ta-match-category">
+  <h3>${labels[category]}</h3>
+  ${options.length ? `<ul>${options.map(({add, drop, value, score}) => `<li>
+   <div><span>Ekle</span> <b data-no-translate>${esc(add.name)}</b> · <strong>${labels[category]}</strong> <strong>${statText(add.stats[category],category)}</strong> · <span>Bırak</span> <b data-no-translate>${esc(drop.name)}</b></div>
+   <div><span>Takım tahmini</span> ${statText(own[category],category)} → <strong>${statText(value,category)}</strong>
+    · <span>Rakip</span> ${statText(opponent[category],category)} · <span>Tahmini skor</span> <b>${score.wins}-${score.losses}</b></div>
+  </li>`).join('')}</ul>` : '<p>Bu kategori için uygun oyuncu bulunamadı.</p>'}
+ </section>`).join('');
+}
+
+function drawEfficiency() {
+ if (typeof data === 'undefined' || !data || !league) return;
+ const team = league.teams.find(item => item.id === state.team);
+ if (!team) return;
+ const selected = el('effDate').value;
+ const current = today();
+ const date = selected < current ? current : selected;
+ const week = data.weeks.find(item => date >= item.start && date <= item.end);
+ if (!week) {
+  el('effSummary').textContent = 'Seçilen tarih kayıtlı NBA takviminin dışında.';
+  el('effDays').innerHTML = '';
+  el('effPlans').innerHTML = '';
+  return;
+ }
+ const dates = [];
+ for (let day = date; day <= week.end; day = shiftDate(day, 1)) dates.push(day);
+ const games = schedule();
+ for (const nba of Object.keys(games)) {
+  games[nba] = games[nba].filter(day => day !== current || (liveDay.date === current && liveDay.states?.[nba] === 'pre'));
+ }
+ const players = roster(team);
+ const slots = activeSlots(team);
+ const baseline = E.totals(players, slots, dates, games);
+ const own = E.estimate(baseline.days.flatMap(day => day.players));
+ const match = el('teamPage').hidden ? null : getMatchup(week, team);
+ const rival = match?.data && league.teams.find(item => item.id === match.data.opponent);
+ let opponent = null;
+ let score = null;
+ let suggestions = '';
+ if (rival) {
+  const projection = E.totals(roster(rival), activeSlots(rival), dates, games);
+  opponent = {games: projection.games, stats: E.estimate(projection.days.flatMap(day => day.players))};
+  score = E.matchupScore(own, opponent.stats);
+  const groups = E.matchupUpgrades({roster: players, players: catalog.players, availability: league.availability,
+   slots, dates, schedule: games, locks, own, opponent: opponent.stats});
+  suggestions = matchupSuggestions(groups, own, opponent.stats);
+ } else if (match) {
+  suggestions = `<p class="ta-empty">${match.pending ? 'Yahoo haftalık rakibi yükleniyor…' : 'Yahoo haftalık rakibi doğrulanamadı.'}</p>`;
+ }
+ el('effSummary').textContent = `${week.number}. hafta · ${fmt(date)} – ${fmt(week.end)} · Kalan maçların tahmini`;
+ if (dates.includes(current) && !(liveDay.date === current && liveDay.states)) {
+  el('effSummary').textContent += ' · Bugünkü maçların durumu doğrulanana kadar yalnızca sonraki günler hesaba katılır.';
+ }
+ el('effDays').innerHTML = efficiencyTable(baseline, own, opponent, rival, score);
+ el('effPlans').innerHTML = suggestions ? `<h3>Eşleşme için takviyeler</h3>${suggestions}` : '';
+ if (!dayLoading && dates.includes(current) && (liveDay.date !== current || Date.now() - liveDay.checkedAt >= 60000)) updateDayStatus();
 }
 el('loadLeague').onclick=loadLeague;el('myTeam').onchange=()=>{state.team=el('myTeam').value;render()};el('taSearch').oninput=()=>{state.query=el('taSearch').value;render()};el('taSort').onchange=()=>{state.sort=el('taSort').value;render()};el('taList').onchange=()=>{state.list=el('taList').value;render()};el('needs').innerHTML=Object.entries(labels).map(([k,v])=>`<label><input type="checkbox" value="${k}" ${k==='threes'?'checked':''}>${v}</label>`).join('');el('needs').onchange=()=>render();el('includeWaiver').onchange=()=>drawRecommendations();el('effDate').value=today();el('effDate').onchange=()=>{drawEfficiency();updateDayStatus()};
 el('playerTable').onclick=e=>{const id=e.target.dataset.lock;if(id){e.target.checked?locks.add(id):locks.delete(id);drawEfficiency();persist()}};
