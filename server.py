@@ -98,6 +98,7 @@ def fetch_catalog(lid):
 def atomic(path,obj):
  tmp=path.with_suffix('.tmp');tmp.write_text(json.dumps(obj,ensure_ascii=False));tmp.replace(path)
 def refresh(lid):
+ global MATCHUP_GENERATION
  if not re.fullmatch(r'\d{1,10}',lid):raise ValueError('Geçersiz lig numarası')
  teams,lineups=parse_rosters(get(f'https://basketball.fantasysports.yahoo.com/nba/{lid}/startingrosters'),lid)
  players=fetch_catalog(lid);available={p['id']:p.pop('_availability') for p in players};warnings=[]
@@ -114,6 +115,10 @@ def refresh(lid):
  league={'id':lid,'name':'Yahoo ligi '+lid,'updatedAt':stamp,'teams':teams,'availability':available,'lineups':{k:{pid:v['slot'] for pid,v in line.items()} for k,line in lineups.items()},'publicOnly':True}
  title=html.fromstring(get(f'https://basketball.fantasysports.yahoo.com/nba/{lid}')).xpath('string(//title)');league['name']=title.split('|')[0].strip() or league['name']
  with LOCK:atomic(CACHE/f'catalog-{season()}.json',catalog);atomic(CACHE/f'league-{lid}.json',league)
+ with MATCHUP_LOCK:
+  MATCHUP_GENERATION += 1
+  for key in list(MATCHUPS):
+   if key[0] == lid:del MATCHUPS[key]
  return {'catalog':catalog,'league':league}
 # Long Yahoo downloads run outside HTTP requests. Clients poll a short job endpoint.
 JOBS={}
@@ -159,6 +164,7 @@ def game_status(date):
 
 MATCHUPS = {}
 MATCHUP_LOCK = threading.Lock()
+MATCHUP_GENERATION = 0
 
 def parse_matchup(source, league, team, week):
     document = html.fromstring(source)
@@ -196,7 +202,44 @@ def parse_matchup(source, league, team, week):
     if not dates:
         raise ValueError('Yahoo eşleşme tarihleri bulunamadı.')
     return {'team': team, 'opponent': opponent, 'week': int(week),
-            'start': min(dates), 'end': max(dates)}
+            'start': min(dates), 'end': max(dates), 'dates': sorted(dates)}
+
+def parse_daily_matchup(source, league, teams, week, date):
+    document = html.fromstring(source)
+    expected = {'week': [week], 'date': [date], 'mid1': [teams[0]], 'mid2': [teams[1]]}
+    for href in document.xpath('//link[@rel="canonical"]/@href'):
+        url = urlparse(href)
+        query = parse_qs(url.query)
+        if url.path == f'/nba/{league}/matchup' and all(query.get(k) == v for k, v in expected.items()):
+            break
+    else:
+        raise ValueError('Yahoo günlük eşleşme sayfası doğrulanamadı.')
+
+    for table in document.xpath('//table[thead and tbody]'):
+        headers = [text(cell) for cell in table.xpath('./thead/tr/th')]
+        player_columns = [i for i, label in enumerate(headers) if i > 0 and label == 'Player' and headers[i-1] == 'Pos']
+        if len(player_columns) == 2:
+            break
+    else:
+        raise ValueError('Yahoo günlük kadro tablosu okunamadı.')
+
+    lineups = {team: [] for team in teams}
+    for row in table.xpath('./tbody/tr[td]'):
+        cells = row.xpath('./td')
+        for team, column in zip(teams, player_columns):
+            if column >= len(cells):
+                continue
+            player = identity(cells[column])
+            if not player:
+                continue
+            slot = text(cells[column-1])
+            if not slot:
+                raise ValueError('Yahoo günlük kadro yuvası okunamadı.')
+            games = cells[column].xpath('.//span[contains(concat(" ",normalize-space(@class)," ")," ysf-game-status ")]/a')
+            upcoming = any(re.match(r'^\d{1,2}:\d{2}\s*[ap]m\b', text(game), re.I) for game in games)
+            lineups[team].append({'id': player['id'], 'slot': slot,
+                                  'injury': player['injury'], 'upcoming': upcoming})
+    return lineups
 
 def parse_current_roster(source, league, team):
     document = html.fromstring(source)
@@ -230,13 +273,18 @@ def league_matchup(league, team, week):
         cached = MATCHUPS.get(key)
         if cached and time.monotonic() - cached[0] < 300:
             return cached[1]
+        generation = MATCHUP_GENERATION
     url = f'https://basketball.fantasysports.yahoo.com/nba/{league}/matchup?date=totals&week={week}&mid1={team}'
     result = parse_matchup(get(url), league, team, week)
     teams = (team, result['opponent'])
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        pages = pool.map(get, (f'https://basketball.fantasysports.yahoo.com/nba/{league}/{tid}' for tid in teams))
-        result['rosters'] = {tid: parse_current_roster(page, league, tid) for tid, page in zip(teams, pages)}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=9) as pool:
+        roster_pages = {tid: pool.submit(get, f'https://basketball.fantasysports.yahoo.com/nba/{league}/{tid}') for tid in teams}
+        daily_pages = {day: pool.submit(get, f'https://basketball.fantasysports.yahoo.com/nba/{league}/matchup?week={week}&mid1={team}&mid2={teams[1]}&date={day}') for day in result['dates']}
+        result['rosters'] = {tid: parse_current_roster(page.result(), league, tid) for tid, page in roster_pages.items()}
+        result['dailyLineups'] = {day: parse_daily_matchup(page.result(), league, teams, week, day) for day, page in daily_pages.items()}
     with MATCHUP_LOCK:
+        if generation != MATCHUP_GENERATION:
+            return result
         MATCHUPS.pop(key, None)
         MATCHUPS[key] = (time.monotonic(), result)
         if len(MATCHUPS) > 128:

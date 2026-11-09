@@ -49,6 +49,35 @@ function lineup(players,slots,date,schedule){
 }
 function estimate(players){const sum={};for(const k of ['fgm','fga','ftm','fta','threes','pts','reb','ast','stl','blk','to'])sum[k]=players.every(p=>n(p,k)!==null)?players.reduce((s,p)=>s+n(p,k),0):null;sum.fg=sum.fga?sum.fgm/sum.fga:null;sum.ft=sum.fta?sum.ftm/sum.fta:null;return sum}
 function totals(roster,slots,dates,schedule){const days=dates.map(d=>{const x=lineup(roster,slots,d,schedule);return {date:d,...x,stats:estimate(x.players)}});return {days,games:days.reduce((s,x)=>s+x.players.length,0)}}
+
+function assignedTotals(roster, dates, assignments) {
+ const byId = new Map(roster.map(player => [player.id, player]));
+ const days = dates.map(date => {
+  const scheduled = assignments[date].flatMap(row => {
+   const player = byId.get(row.id);
+   if (!row.upcoming || !player || inactiveSlot(row.slot) || inactiveSlot(player.slot) ||
+       !healthy(row) || !healthy(player)) return [];
+   return [{...player, slot: row.slot}];
+  });
+  const players = scheduled.filter(player => player.slot !== 'BN');
+  return {date, players, scheduled: scheduled.length, benched: scheduled.length - players.length,
+   stats: estimate(players)};
+ });
+ return {days, games: days.reduce((sum, day) => sum + day.players.length, 0)};
+}
+
+function assignedSwap(day, slots, drop, add, schedule) {
+ const players = day.players.filter(player => player.id !== drop.id);
+ if (!schedule[add.nba]?.includes(day.date)) return players;
+ const open = slots.slice();
+ for (const player of players) {
+  const index = open.indexOf(player.slot);
+  if (index >= 0) open.splice(index, 1);
+ }
+ const slot = open.find(candidate => fits(add, candidate));
+ return slot ? [...players, {...add, slot}] : players;
+}
+
 function protectedPlayer(p,locks){return locks.has(p.id)||(p.rank!==null&&p.rank<=75)||(p.preRank!==null&&p.preRank<=50)}
 
 function compareCategory(category, own, opponent) {
@@ -70,7 +99,7 @@ function matchupScore(own, opponent) {
  };
 }
 
-function matchupUpgrades({roster, players, availability, slots, dates, schedule, locks, own, opponent, selectedCategory}) {
+function matchupUpgrades({roster, players, availability, slots, dates, schedule, locks, own, opponent, selectedCategory, baselineDays}) {
  const score = matchupScore(own, opponent);
  const groups = cats.filter(category => {
   if (selectedCategory && category !== selectedCategory) return false;
@@ -84,12 +113,14 @@ function matchupUpgrades({roster, players, availability, slots, dates, schedule,
  const rosterIds = new Set(roster.map(player => player.id));
  const adds = players.filter(player => eligible(player) && availability[player.id] === 'FA' &&
   !rosterIds.has(player.id) && dates.some(date => schedule[player.nba]?.includes(date)));
- const drops = roster.filter(player => !protectedPlayer(player, locks) && !inactiveSlot(player.slot));
+ const drops = roster.filter(player => inScope(player) && !protectedPlayer(player, locks) && !inactiveSlot(player.slot));
  for (const drop of drops) {
   const remaining = roster.filter(player => player.id !== drop.id);
   for (const add of adds) {
    const swapped = [...remaining, {...add, slot: drop.slot}];
-   const appearances = dates.flatMap(date => lineup(swapped, slots, date, schedule).players);
+   const appearances = baselineDays
+    ? baselineDays.flatMap(day => assignedSwap(day, slots, drop, add, schedule))
+    : dates.flatMap(date => lineup(swapped, slots, date, schedule).players);
    if (!appearances.some(player => player.id === add.id)) continue;
    const projected = estimate(appearances);
    const after = matchupScore(projected, opponent);
@@ -128,5 +159,5 @@ function optimize(roster,players,availability,slots,dates,schedule,locks,needs){
  }
  return {baseline,plans:plans.sort((a,b)=>b.gain-a.gain||a.rankCost-b.rankCost).filter((p,i,a)=>a.findIndex(q=>q.add.id===p.add.id)===i).slice(0,6)};
 }
-const api={cats,normalize,inScope,healthy,eligible,recommend,rates,fits,lineup,estimate,totals,protectedPlayer,optimize,matchupScore,matchupUpgrades};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.TeamEngine=api;
+const api={cats,normalize,inScope,healthy,eligible,recommend,rates,fits,lineup,estimate,totals,assignedTotals,protectedPlayer,optimize,matchupScore,matchupUpgrades};if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.TeamEngine=api;
 })(typeof window==='undefined'?{}:window);

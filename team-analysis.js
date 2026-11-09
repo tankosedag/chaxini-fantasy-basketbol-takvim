@@ -6,7 +6,7 @@ let saved;try{saved=JSON.parse(localStorage.getItem('chaxini-team-state')||'null
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const format=(x,pct=false)=>Number.isFinite(x)?pct?(x*100).toFixed(1)+'%':Number.isInteger(x)?String(x):x.toFixed(1):'—';
 const cache={async get(key){try{return await new Promise(resolve=>{const r=indexedDB.open('chaxini-players',1);r.onupgradeneeded=()=>r.result.createObjectStore('data');r.onerror=()=>resolve(null);r.onsuccess=()=>{const db=r.result,q=db.transaction('data').objectStore('data').get(key);q.onsuccess=()=>{resolve(q.result);db.close()};q.onerror=()=>{resolve(null);db.close()}}})}catch{return null}},async put(key,value){try{await new Promise(resolve=>{const r=indexedDB.open('chaxini-players',1);r.onupgradeneeded=()=>r.result.createObjectStore('data');r.onerror=()=>resolve();r.onsuccess=()=>{const db=r.result,t=db.transaction('data','readwrite');t.objectStore('data').put(value,key);t.oncomplete=()=>{db.close();resolve()};t.onerror=()=>{db.close();resolve()}}})}catch{}}};
-function status(t){el('teamStatus').textContent=t}
+function status(t){el('teamStatus').textContent=t;el('effLeagueStatus').textContent=t}
 let liveDay={date:'',states:null,checkedAt:0},dayLoading=false;
 async function updateDayStatus(){
  if(dayLoading||liveDay.date===today()&&Date.now()-liveDay.checkedAt<60000)return;dayLoading=true;
@@ -29,7 +29,7 @@ async function accept(payload,fromSnapshot=false){
  render();
 }
 function leagueId(url){let u;try{u=new URL(url)}catch{throw Error('Tam Yahoo NBA lig bağlantısını yapıştır.')}if(u.protocol!=='https:'||u.hostname!=='basketball.fantasysports.yahoo.com')throw Error('Yalnızca https://basketball.fantasysports.yahoo.com/nba/… bağlantıları kabul edilir.');const m=u.pathname.match(/^\/nba\/(\d+)(?:\/|$)/);if(!m)throw Error('Lig numarası bağlantıda bulunamadı.');return m[1]}
-async function loadLeague(){if(busy)return;let id;try{id=leagueId(el('leagueUrl').value.trim())}catch(e){status(e.message);return}busy=true;el('loadLeague').disabled=true;status('Lig kadroları ve oyuncu havuzu yükleniyor… İlk yükleme birkaç dakika sürebilir.');try{
+async function loadLeague(activeLeagueId){if(busy)return;let id;try{id=activeLeagueId||leagueId(el('leagueUrl').value.trim())}catch(e){status(e.message);return}busy=true;el('loadLeague').disabled=el('effRefreshLeague').disabled=true;status('Lig kadroları ve oyuncu havuzu yükleniyor… İlk yükleme birkaç dakika sürebilir.');try{
  const base=apiBase;if(base&&!/^https:\/\//.test(base)&&!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base))throw Error('Veri servisi adresi HTTPS olmalı.');try{localStorage.setItem('chaxini-team-api',base)}catch{}
  const deadline=Date.now()+480000;let job='',payload;
  while(true){
@@ -45,7 +45,7 @@ async function loadLeague(){if(busy)return;let id;try{id=leagueId(el('leagueUrl'
 
  }catch(e){const l=await cache.get('league-'+id),c=l?await cache.get('catalog-'+(new Date().getMonth()>=7?new Date().getFullYear():new Date().getFullYear()-1)):null;
  if(l&&c){await accept({league:l,catalog:c},true);status(el('teamStatus').textContent+' · Yenileme başarısız; son kayıt gösteriliyor. '+(e.name==='AbortError'?'Sunucu yanıtı zaman aşımına uğradı; biraz sonra tekrar dene.':e.message))}else status('Lig yüklenemedi. GitHub Pages üzerinde canlı yükleme için veri servisi bağlantısı gerekir. Kayıtlı örnek ligi açabilir veya bağlantı ayarını yapabilirsin. '+(e.name==='AbortError'?'İstek zaman aşımına uğradı.':e.message));
- }finally{busy=false;el('loadLeague').disabled=false}}
+ }finally{busy=false;el('loadLeague').disabled=el('effRefreshLeague').disabled=false}}
 function needs(){const a=[...document.querySelectorAll('#needs input:checked')].map(e=>e.value);return a.length?a:['pts']}
 function badge(p){const c=colors[p.nba]||'#506070';return `<span class="monogram" style="--tc:${esc(c)}" title="${esc(names[p.nba]||p.nba)}">${esc(p.nba||'?')}</span>`}
 function playerName(p){return `<div class="ta-player">${badge(p)}<div><strong>${esc(p.name)}</strong><small>${esc(p.positions.join(' / '))}${p.slot?' · '+esc(p.slot):''}${p.injury?' · <b class="ta-injury">'+esc(p.injury)+'</b>':''}</small></div></div>`}
@@ -104,12 +104,15 @@ function getMatchup(week, team) {
  if (matchupRequests.size > 64) matchupRequests.delete(matchupRequests.keys().next().value);
  const params = new URLSearchParams({id, team: team.id, week: week.number});
  const controller = new AbortController();
- const timer = setTimeout(() => controller.abort(), 65000);
+ const timer = setTimeout(() => controller.abort(), 95000);
  fetch(`${apiBase}/api/matchup?${params}`, {cache: 'no-store', signal: controller.signal})
   .then(async response => {
    if (!response.ok) return;
    const match = await response.json();
-   if (match.team === team.id && match.week === week.number && match.start === week.start && match.end === week.end && match.rosters?.[team.id]?.lineup && match.rosters?.[match.opponent]?.lineup) {
+   const verifiedDays = match.dates?.length && match.dates.every(day =>
+    Array.isArray(match.dailyLineups?.[day]?.[team.id]) && Array.isArray(match.dailyLineups?.[day]?.[match.opponent]));
+   if (match.team === team.id && match.week === week.number && match.start === week.start && match.end === week.end &&
+       match.rosters?.[team.id]?.lineup && match.rosters?.[match.opponent]?.lineup && verifiedDays) {
     entry.data = match;
    }
   }).catch(() => {}).finally(() => {
@@ -122,12 +125,9 @@ function getMatchup(week, team) {
 }
 
 function currentRoster(yahooRoster, playersById) {
- return Object.entries(yahooRoster.lineup).flatMap(([id, {slot, injury}]) => {
-  const player = playersById.get(id);
-  if (!player) return [];
-  const current = {...player, slot, injury};
-  return E.inScope(current) ? [current] : [];
- });
+ return Object.entries(yahooRoster.lineup).map(([id, {slot, injury}]) => ({
+  ...(playersById.get(id) || {id, stats: {}}), slot, injury
+ }));
 }
 
 function statText(value, category) {
@@ -198,8 +198,7 @@ function drawEfficiency() {
   el('effPickers').hidden = true;
   return;
  }
- const dates = [];
- for (let day = date; day <= week.end; day = shiftDate(day, 1)) dates.push(day);
+ const dates = match.data.dates.filter(day => day >= date);
  const games = schedule();
  for (const nba of Object.keys(games)) {
   games[nba] = games[nba].filter(day => day !== current || (liveDay.date === current && liveDay.states?.[nba] === 'pre'));
@@ -210,18 +209,19 @@ function drawEfficiency() {
  const players = currentRoster(yahooOwn, playersById);
  const rivalPlayers = currentRoster(yahooRival, playersById);
  const slots = yahooOwn.slots;
- const baseline = E.totals(players, slots, dates, games);
+ const assignments = teamId => Object.fromEntries(dates.map(day => [day, match.data.dailyLineups[day][teamId]]));
+ const baseline = E.assignedTotals(players, dates, assignments(team.id));
  const own = E.estimate(baseline.days.flatMap(day => day.players));
- const projection = E.totals(rivalPlayers, yahooRival.slots, dates, games);
+ const projection = E.assignedTotals(rivalPlayers, dates, assignments(rival.id));
  const opponent = {games: projection.games, stats: E.estimate(projection.days.flatMap(day => day.players))};
  const score = E.matchupScore(own, opponent.stats);
  const availability = {...league.availability};
  for (const id of [...Object.keys(yahooOwn.lineup), ...Object.keys(yahooRival.lineup)]) availability[id] = 'owned';
  const groups = E.matchupUpgrades({roster: players, players: catalog.players, availability,
-  slots, dates, schedule: games, locks, own, opponent: opponent.stats, selectedCategory: matchupCategory});
+  slots, dates, schedule: games, locks, own, opponent: opponent.stats, selectedCategory: matchupCategory, baselineDays: baseline.days});
  el('effSummary').textContent = `${week.number}. hafta · ${fmt(date)} – ${fmt(week.end)} · Kalan maçların tahmini`;
  if (dates.includes(current) && !(liveDay.date === current && liveDay.states)) {
-  el('effSummary').textContent += ' · Bugünkü maçların durumu doğrulanana kadar yalnızca sonraki günler hesaba katılır.';
+  el('effSummary').textContent += ' · Bugünkü takviye maçları ESPN maç durumu alındığında değerlendirilir.';
  }
  el('effDays').innerHTML = efficiencyTable(baseline, own, opponent, rival, score);
  el('effPickers').hidden = false;
@@ -229,7 +229,8 @@ function drawEfficiency() {
  if (!dayLoading && dates.includes(current) && (liveDay.date !== current || Date.now() - liveDay.checkedAt >= 60000)) updateDayStatus();
 }
 
-el('loadLeague').onclick=loadLeague;el('myTeam').onchange=el('effTeam').onchange=event=>{state.team=event.target.value;el('myTeam').value=el('effTeam').value=state.team;render()};el('taSearch').oninput=()=>{state.query=el('taSearch').value;render()};el('taSort').onchange=()=>{state.sort=el('taSort').value;render()};el('taList').onchange=()=>{state.list=el('taList').value;render()};el('needs').innerHTML=Object.entries(labels).map(([k,v])=>`<label><input type="checkbox" value="${k}" ${k==='threes'?'checked':''}>${v}</label>`).join('');el('needs').onchange=()=>render();el('includeWaiver').onchange=()=>drawRecommendations();el('effDate').value=today();el('effDate').onchange=()=>{drawEfficiency();updateDayStatus()};
+el('loadLeague').onclick=()=>loadLeague();
+el('effRefreshLeague').onclick=()=>{if(league)loadLeague(league.id)};el('myTeam').onchange=el('effTeam').onchange=event=>{state.team=event.target.value;el('myTeam').value=el('effTeam').value=state.team;render()};el('taSearch').oninput=()=>{state.query=el('taSearch').value;render()};el('taSort').onchange=()=>{state.sort=el('taSort').value;render()};el('taList').onchange=()=>{state.list=el('taList').value;render()};el('needs').innerHTML=Object.entries(labels).map(([k,v])=>`<label><input type="checkbox" value="${k}" ${k==='threes'?'checked':''}>${v}</label>`).join('');el('needs').onchange=()=>render();el('includeWaiver').onchange=()=>drawRecommendations();el('effDate').value=today();el('effDate').onchange=()=>{drawEfficiency();updateDayStatus()};
 el('effCategories').innerHTML = E.cats.map(category => `<label><input type="radio" name="matchup-category" value="${category}" ${category===matchupCategory?'checked':''}>${labels[category]}</label>`).join('');
 el('effCategories').onchange = event => {if(event.target.checked){matchupCategory=event.target.value;drawEfficiency()}};
 el('playerTable').onclick=e=>{const id=e.target.dataset.lock;if(id){e.target.checked?locks.add(id):locks.delete(id);drawEfficiency();persist()}};
