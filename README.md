@@ -39,7 +39,7 @@ Bu hesaplar sezon ortalamalarına dayalı tahminlerdir. Oyuncu ekleme veya çık
 
 ## Canlı uygulama
 
-**[Chaxini’yi aç](https://chaxini-fantasy-basketbol-takvim.onrender.com)**
+**[Chaxini uygulamasını aç](https://chaxini-fantasy-basketbol-takvim.onrender.com)**
 
 ## Telefona ekleme
 
@@ -92,4 +92,3 @@ Chrome sürümüne göre ilk seçenek **Ana ekrana ekle** adıyla da görünebil
   </tbody>
 </table>
 
-Safari’de Paylaş simgesi doğrudan görünüyorsa ilk adımda ona dokunabilirsin. iPhone’da Google Chrome kullanıyorsan adres çubuğundaki **Paylaş** düğmesinden **Ana Ekrana Ekle** seçeneğine ulaşabilirsin. [Apple Destek](https://support.apple.com/tr-tr/guide/iphone/iphea86e5236/ios) · [iOS için Google Chrome Yardım](https://support.google.com/chrome/answer/9658361?co=GENIE.Platform%3DiOS&hl=tr)
