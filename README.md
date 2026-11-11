@@ -43,7 +43,7 @@ Bu hesaplar sezon ortalamalarına dayalı tahminlerdir. Oyuncu ekleme veya çık
 
 ## Telefona ekleme
 
-Yukarıdaki bağlantıyı telefonunda aç. Kurulum tamamlandığında Chaxini’ye ana ekrandaki simgesinden ulaşabilirsin.
+Yukarıdaki bağlantıyı telefonunda aç. Kurulum tamamlandığında Chaxini uygulamasını ana ekrandaki simgesinden ulaşabilirsin.
 
 ### Android · Google Chrome
 
