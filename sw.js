@@ -1,5 +1,5 @@
-const CACHE='chaxini-pwa-v27-yahoo-daily-lineups';
-const ASSETS=['./','./index.html','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/apple-touch-icon.png','./icons/maskable-512.png','./icons/favicon-32.png','./icons/favicon-64.png','./favicon.ico','./i18n.js','./team-engine.js','./team-analysis.js','./team-snapshot.json'];
+const CACHE='chaxini-pwa-v30-desktop-home';
+const ASSETS=['./','./index.html','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/apple-touch-icon.png','./icons/maskable-512.png','./icons/favicon-32.png','./icons/favicon-64.png','./favicon.ico','./icons/home-season.png','./icons/home-weekly.png','./icons/home-analysis.png','./icons/home-team.png','./icons/home-efficiency.png','./i18n.js','./team-engine.js','./team-analysis.js','./team-snapshot.json'];
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('chaxini-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));
 self.addEventListener('fetch',e=>{

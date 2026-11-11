@@ -3,7 +3,7 @@
   "name": "chaxini fantasy basketbol takvimi",
   "short_name": "chaxini",
   "lang": "tr",
-  "start_url": "./#sezon-ozeti",
+  "start_url": "./#ana-sayfa",
   "scope": "./",
   "display": "standalone",
   "background_color": "#101719",
