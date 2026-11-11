@@ -66,8 +66,6 @@ Yukarıdaki bağlantıyı telefonunda aç. Kurulum tamamlandığında Chaxini’
   </tbody>
 </table>
 
-Chrome sürümüne göre ilk seçenek **Ana ekrana ekle** adıyla da görünebilir. [Google Chrome Yardım](https://support.google.com/chrome/answer/9658361?co=GENIE.Platform%3DAndroid&hl=tr)
-
 ### iPhone · Safari
 
 <table>
